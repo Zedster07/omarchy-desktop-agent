@@ -37,6 +37,20 @@ doctor() {
   # Nothing to check in voxtype's config any more. Command mode uses
   # `voxtype record start --file`, so dictation runs the exact code path it
   # ran before this plugin existed -- no hook, no post-processor, no tax.
+  # Model and backend are voxtype's, but they decide whether any of this is
+  # usable, so the health check reports them rather than staying silent.
+  local vxmodel vxbackend
+  vxmodel="$(voxtype config 2>/dev/null | grep -A1 '\[whisper\]' | grep 'model' | cut -d'"' -f2)"
+  vxbackend="$(voxtype setup gpu --status 2>/dev/null | grep -i 'active backend' | cut -d: -f2- | xargs)"
+  [[ -n "$vxmodel" ]] && ok "speech model ${vxmodel} on ${vxbackend:-unknown backend}"
+  if [[ "$vxmodel" == base* || "$vxmodel" == tiny* ]]; then
+    warn "small.en is markedly more accurate on short commands (see README)"
+  fi
+  # A Vulkan device without fp16 can be slower than the CPU. Say so.
+  if journalctl --user -u voxtype -n 200 --no-pager 2>/dev/null | grep -q 'ggml_vulkan: 0 = .*fp16: 0'; then
+    warn "the selected Vulkan device reports fp16: 0 — it may be slower than another one"
+  fi
+
   if [[ "$(hyprctl getoption decoration:blur:enabled 2>/dev/null | head -1)" == *"1"* ]] \
      || [[ "$(hyprctl getoption decoration:blur:enabled 2>/dev/null | head -1)" == *"true"* ]]; then
     ok "compositor blur on (overlays read as a HUD)"

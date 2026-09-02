@@ -132,6 +132,48 @@ asked.
 The prompt shows what it heard, which intent matched, the exact argv, and why
 it stopped. You are never approving a black box.
 
+## If it keeps mishearing you
+
+Accuracy is voxtype's, not this plugin's, but it is the thing that decides
+whether any of this is usable, so it is worth saying where the wins are.
+
+Omarchy ships whisper `base.en` on CPU. That is the second-smallest model and
+it fails in a characteristic way on short commands -- "open chrome" heard as
+"hope chrome", a song title heard as an ordinary phrase -- because whisper's
+decoder is a language model filling in what the acoustics left ambiguous.
+
+```bash
+sudo voxtype setup gpu --enable            # Vulkan; the binary already ships
+voxtype setup --download --model small.en
+voxtype setup model --set small.en --restart
+```
+
+**Check which GPU it picked.** On a hybrid-graphics laptop the answer is not
+the obvious one. Measured here, small.en on a 2s clip:
+
+| device | | |
+|---|---|---|
+| Intel HD 530 (iGPU) | `fp16: 1` | **~7.0s** |
+| Quadro M2000M (discrete) | `fp16: 0` | ~23.8s |
+
+The discrete card is three times slower because it is Maxwell, reports no
+fast fp16, and ggml falls back to fp32. Pin the right one with a systemd
+drop-in for the voxtype unit:
+
+```ini
+[Service]
+Environment=GGML_VK_VISIBLE_DEVICES=0
+```
+
+`journalctl --user -u voxtype | grep ggml_vulkan` lists the devices and their
+fp16 support. Prefer whichever reports `fp16: 1`, not whichever is
+"the real graphics card".
+
+If that is still too slow, `voxtype setup onnx --enable` plus the
+`parakeet-tdt-0.6b-v3-int8` model is the other direction: NVIDIA's TDT model
+is at the top of the English leaderboards and is not autoregressive, so it is
+less prone to the confident-wrong-word failure above.
+
 ## When a command is misheard
 
 Matching is strict on purpose, so the usual failure is *"No command matched"* —
