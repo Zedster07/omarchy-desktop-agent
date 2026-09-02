@@ -295,6 +295,19 @@ virtualenv under `~/.local/share/desktop-agent/` and installs faster-whisper
 into it (432 MB plus the model) — but only after the panel has shown you the
 size and you have said yes. Nothing is installed system-wide.
 
+## Developing on this
+
+Plugin QML does not reliably hot-reload for panel components — a `Panel.qml`
+change can leave the old one instantiated, so a new dropdown option or a
+changed label simply will not appear.
+
+```bash
+omarchy restart shell
+qs -p /usr/share/omarchy/shell log | grep zedster07
+```
+
+That is the first thing to try when an edit looks like it did nothing.
+
 ## Licence
 
 MIT.
