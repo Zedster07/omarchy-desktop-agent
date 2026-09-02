@@ -186,5 +186,16 @@ class Handler(BaseHTTPRequestHandler):
 
 
 if __name__ == "__main__":
-    model()   # fail loudly at startup, not on the first utterance
+    # The model loads on the first LOCAL request, not at startup.
+    #
+    # Eagerly loading it meant someone using a cloud endpoint still paid for a
+    # 430 MB install and an 835 MB model download to make an HTTP call. The
+    # remote path does not come through this service at all now, and this
+    # service refuses to exist expensively for someone who never uses it.
+    if os.environ.get("DA_STT_PRELOAD", "1") == "1":
+        try:
+            model()
+        except Exception as e:
+            print(f"[stt] model unavailable ({e}); local transcription will fail, "
+                  f"remote is unaffected", flush=True)
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()

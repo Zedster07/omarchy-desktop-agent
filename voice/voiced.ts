@@ -159,28 +159,76 @@ function remoteKey(): string {
   } catch { return "" }
 }
 
-async function transcribe(wav: Buffer, mode: Mode): Promise<string> {
-  const sttMode = await settingStr("voice.sttMode", "local")
-  const bias = (await setting<boolean>("voice.biasPrompt", true)) && mode === "command"
-    ? BIAS : ""
-  const headers: Record<string, string> = {
-    "Content-Type": "application/octet-stream",
-    "X-Mode": sttMode === "remote" ? "remote" : "local",
-    "X-Prompt": bias,
+/**
+ * Remote transcription, done here rather than through the Python service.
+ *
+ * The remote path needs an HTTP POST and nothing else -- no model, no
+ * faster-whisper, no virtualenv. Routing it through stt/server.py would have
+ * meant a 430 MB install and an 835 MB model download to make a network call,
+ * which is exactly the kind of dependency nobody notices they are paying for.
+ * Cloud users install the plugin and bun. That is all.
+ */
+async function transcribeRemote(wav: Buffer, prompt: string): Promise<string> {
+  const key = remoteKey()
+  if (!key) throw new Error("no API key set")
+  const endpoint = await settingStr(
+    "voice.remoteEndpoint", "https://api.groq.com/openai/v1/audio/transcriptions")
+  const model = await settingStr("voice.remoteModel", "whisper-large-v3-turbo")
+
+  const form = new FormData()
+  form.append("file", new Blob([wav], { type: "audio/wav" }), "speech.wav")
+  form.append("model", model)
+  form.append("response_format", "verbose_json")
+  form.append("temperature", "0")
+  form.append("language", "en")
+  if (prompt) form.append("prompt", prompt)
+
+  const res = await fetch(endpoint, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}` },
+    body: form,
+    signal: AbortSignal.timeout(40000),
+  })
+  if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 120)}`)
+  const j: any = await res.json()
+
+  // Same confidence thresholds as the local path: drop segments the model
+  // itself flags as probably-not-speech rather than trusting the joined text.
+  const segs: any[] = Array.isArray(j.segments) ? j.segments : []
+  if (segs.length) {
+    return segs
+      .filter(s => (s.no_speech_prob ?? 0) <= 0.6 && (s.avg_logprob ?? 0) >= -1.0)
+      .map(s => s.text ?? "")
+      .join("")
+      .trim()
   }
-  if (sttMode === "remote") {
-    headers["X-Endpoint"] = await settingStr(
-      "voice.remoteEndpoint", "https://api.groq.com/openai/v1/audio/transcriptions")
-    headers["X-Remote-Model"] = await settingStr("voice.remoteModel", "whisper-large-v3-turbo")
-    headers["X-Key"] = remoteKey()
-  }
+  return String(j.text ?? "").trim()
+}
+
+async function transcribeLocal(wav: Buffer, prompt: string): Promise<string> {
   const res = await fetch(`${STT}/transcribe`, {
-    method: "POST", body: wav, headers, signal: AbortSignal.timeout(40000),
+    method: "POST",
+    body: wav,
+    headers: {
+      "Content-Type": "application/octet-stream",
+      "X-Mode": "local",
+      "X-Prompt": prompt,
+    },
+    signal: AbortSignal.timeout(40000),
   })
   if (!res.ok) throw new Error(`stt ${res.status}`)
   const j: any = await res.json()
   if (j.error) throw new Error(String(j.error))
   return String(j.text ?? "").trim()
+}
+
+async function transcribe(wav: Buffer, mode: Mode): Promise<string> {
+  const sttMode = await settingStr("voice.sttMode", "local")
+  const bias = (await setting<boolean>("voice.biasPrompt", true)) && mode === "command"
+    ? BIAS : ""
+  return sttMode === "remote"
+    ? transcribeRemote(wav, bias)
+    : transcribeLocal(wav, bias)
 }
 
 // ------------------------------------------------------------------ inject
