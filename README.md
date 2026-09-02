@@ -52,6 +52,20 @@ o.bind("F10", "Voice command", "desktop-agent-arm")
 o.bind("F10", "Voice command (stop)", "voxtype record stop", { release = true })
 ```
 
+## The look
+
+The voice HUD is a radial core, not a card in the corner: concentric rings,
+graduations, counter-rotating arcs, and your voice drawn as a sunburst around
+a centre that breathes while it listens. Every colour comes from Omarchy's
+theme tokens, so a theme swap repaints it.
+
+Compositor blur behind the overlays is optional and off unless you add the
+layer rules `desktop-agent keybinds` prints. It is close to free on a default
+setup — every window is fully opaque, so there is nothing translucent for the
+compositor to blur behind, and the cost lands only on the two plugin surfaces
+while one of them is on screen. Without it everything still works; it just
+looks flat.
+
 ## The action space is a registry, not a prompt
 
 This is the design decision everything else follows from. A spoken phrase is

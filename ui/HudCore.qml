@@ -51,8 +51,8 @@ Item {
       fillGradient: RadialGradient {
         centerX: root.cx; centerY: root.cy; centerRadius: root.rOuter * 1.15
         focalX: root.cx; focalY: root.cy
-        GradientStop { position: 0.0; color: Util.alpha(Color.background, 0.92) }
-        GradientStop { position: 0.55; color: Util.alpha(Color.background, 0.78) }
+        GradientStop { position: 0.0; color: Util.alpha(Color.background, 0.45) }
+        GradientStop { position: 0.6; color: Util.alpha(Color.background, 0.28) }
         GradientStop { position: 1.0; color: Util.alpha(Color.background, 0.0) }
       }
       PathAngleArc {

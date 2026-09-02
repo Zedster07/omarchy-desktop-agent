@@ -37,6 +37,13 @@ doctor() {
   # Nothing to check in voxtype's config any more. Command mode uses
   # `voxtype record start --file`, so dictation runs the exact code path it
   # ran before this plugin existed -- no hook, no post-processor, no tax.
+  if [[ "$(hyprctl getoption decoration:blur:enabled 2>/dev/null | head -1)" == *"1"* ]] \
+     || [[ "$(hyprctl getoption decoration:blur:enabled 2>/dev/null | head -1)" == *"true"* ]]; then
+    ok "compositor blur on (overlays read as a HUD)"
+  else
+    warn "compositor blur off — overlays still work, they just look flat  (desktop-agent keybinds)"
+  fi
+
   if [[ -f "$HOME/.config/hypr/bindings.lua" ]] && grep -q "desktop-agent-arm" "$HOME/.config/hypr/bindings.lua" 2>/dev/null; then
     ok "command-mode keybinding present"
   else
@@ -61,18 +68,35 @@ doctor() {
 # Omarchy binds dictation itself (F9 push-to-talk, SUPER+CTRL+X toggle), so
 # this adds exactly one binding: the one that arms command mode before handing
 # off to voxtype. Existing dictation muscle memory is left alone.
+# Omarchy binds dictation itself (F9 push-to-talk, SUPER+CTRL+X toggle), so
+# this adds exactly one binding: the one that arms command mode. Existing
+# dictation muscle memory is left alone.
+#
+# The blur block is optional but is what makes the voice HUD read as a heads-up
+# display rather than a window. It is close to free on a default Omarchy setup
+# because every window is fully opaque, so there is nothing translucent for the
+# compositor to blur behind -- the cost lands only on the two layer rules, and
+# only while one of those surfaces is on screen.
 keybinds() {
-  local flag="\${XDG_STATE_HOME:-$HOME/.local/state}/desktop-agent/command-mode"
-  cat <<BINDS
+  cat <<'BINDS'
 
 Add to ~/.config/hypr/bindings.lua:
 
-    -- desktop-agent command mode: arm the flag, then record as usual.
-    o.bind("SUPER + SHIFT + D", "Voice command", "desktop-agent-arm")
+    o.bind("F10", "Voice command", "desktop-agent-arm")
+    o.bind("F10", "Voice command (stop)", "voxtype record stop", { release = true })
 
 Dictation is unchanged and still Omarchy's own:
     F9              push-to-talk dictation
     SUPER + CTRL+X  toggle dictation
+
+Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:
+
+    hl.config({
+      decoration = { blur = { enabled = true, size = 6, passes = 2,
+                              new_optimizations = true, ignore_opacity = true } },
+    })
+    hl.layer_rule({ match = { namespace = "omarchy-desktop-agent-voice" }, blur = true })
+    hl.layer_rule({ match = { namespace = "omarchy-desktop-agent-approval" }, blur = true })
 
 BINDS
 }

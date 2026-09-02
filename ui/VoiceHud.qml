@@ -77,11 +77,24 @@ Item {
       ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
 
-    // No scrim. The desktop stays fully visible and fully usable behind this.
+    // Full-screen backdrop.
+    //
+    // Translucent on purpose: the layer rule blurs whatever is BEHIND this
+    // surface, so an opaque fill would blur nothing and just look like a black
+    // sheet. Low alpha plus compositor blur is what separates the core from a
+    // busy desktop while leaving it recognisable underneath -- you are talking
+    // about what is on your screen, so it should not vanish.
+    Rectangle {
+      anchors.fill: parent
+      color: Qt.rgba(0, 0, 0, 1)
+      opacity: root.active ? 0.42 : 0
+      Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
+    }
+
     Item {
       id: stage
       anchors.centerIn: parent
-      width: Math.min(Style.space(520), parent.width - Style.gapsOut * 4)
+      width: Math.min(Style.space(640), parent.width - Style.gapsOut * 4)
       height: core.height + readout.implicitHeight + Style.spacing.huge
 
       opacity: root.active ? 1 : 0
@@ -104,7 +117,7 @@ Item {
         id: core
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.top: parent.top
-        width: Style.space(196)
+        width: Style.space(300)
         height: width
         tone: root.tone
         levels: root.levels
