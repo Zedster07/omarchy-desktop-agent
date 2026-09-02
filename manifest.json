@@ -82,7 +82,7 @@
           "route+plan"
         ],
         "defaultValue": "route",
-        "description": "off: only phrases in the command list work. route: when nothing matches, a LOCAL model picks from the same list \u2014 it can recognise a new wording but cannot invent an action, and nothing leaves the machine. route+plan: also lets your AI CLI write a new command for requests the list does not cover, such as playing something on YouTube. Planned commands are checked against a denylist and always need your approval."
+        "description": "off: only phrases in the command list work. route: when nothing matches, your AI picks from the same list \u2014 it can recognise a new wording but cannot invent an action. route+plan: also lets it write a new command for requests the list does not cover, such as playing something on YouTube. Anything a model decides always needs your approval, and planned commands are checked against a denylist first."
       },
       {
         "key": "aiProvider",
@@ -90,21 +90,21 @@
         "label": "AI provider",
         "options": [
           "auto",
-          "ollama",
           "claude",
           "opencode",
+          "codex",
           "gemini",
-          "codex"
+          "ollama"
         ],
         "defaultValue": "auto",
-        "description": "auto uses a local Ollama model for recognising wordings and your installed CLI agent for planning new commands. Only providers found on this machine are used."
+        "description": "auto prefers an installed CLI agent (claude, then opencode, codex, gemini) and falls back to a local Ollama model only when none is present. The agent is markedly better at the job that matters here \u2014 saying \"none of these\" \u2014 which a small local model gets wrong often enough to act on the wrong command. Cost of that accuracy is about ten seconds on the miss path versus five, and tokens; recognised phrases never reach a model at all."
       },
       {
         "key": "aiModel",
         "type": "string",
-        "label": "Local model",
+        "label": "Local fallback model",
         "defaultValue": "llama3.2:3b",
-        "description": "Ollama model used for recognising wordings. Small and fast matters more than clever here \u2014 it is choosing from a list of about a dozen."
+        "description": "Ollama model used only when no CLI agent is installed. Ignored otherwise."
       },
       {
         "key": "agentEnabled",

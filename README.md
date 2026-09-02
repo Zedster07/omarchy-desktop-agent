@@ -97,6 +97,22 @@ Two rules earn their keep:
   than the digit it sounds like, and a wrong action is much worse than an
   unmatched one — an unmatched one says so.
 
+## Which AI, and when
+
+Most commands never reach a model: a registered phrase is matched by string
+comparison in under a millisecond.
+
+On a miss, your installed CLI agent is asked to pick from the same list —
+claude first, then opencode, codex, gemini, with a local Ollama model as the
+fallback for a machine that has none. The agent is preferred because the job
+is mostly about saying *"none of these"*, and that is the single thing a small
+local model is worst at: asked to route "play Despacito on YouTube", a 3B
+model picked `audio.mute`.
+
+That accuracy costs about ten seconds on the miss path instead of five, and
+tokens. Set `aiProvider` to `ollama` if you would rather have the speed and
+keep it offline.
+
 ## Other plugins can be spoken to
 
 There are over two thousand plugins on the marketplace and none of them can be

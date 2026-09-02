@@ -41,36 +41,51 @@ function configuredModel(): string {
 }
 const OLLAMA_MODEL = configuredModel()
 
+// Ordered by preference, best first.
+//
+// A CLI agent leads and Ollama is the fallback. The local model is free and
+// offline, which is the right default in the abstract -- but in practice a 3B
+// model asked "which of these twelve commands, or none?" answers badly: it
+// routed "play Despacito on YouTube" to audio.mute, and "desktop 3" to
+// workspace.next instead of workspace.switch with a slot. Saying "none of
+// these" is the single thing small models are worst at, and this is a job
+// made almost entirely of that.
+//
+// So: use the good model when there is one, and keep the local one for the
+// machine that has no agent installed rather than as the everyday path.
 const CANDIDATES: Provider[] = [
+  { id: "claude",   kind: "agent", argv: p => ["claude", "-p", p],    timeoutMs: 90_000 },
+  { id: "opencode", kind: "agent", argv: p => ["opencode", "run", p], timeoutMs: 90_000 },
+  { id: "codex",    kind: "agent", argv: p => ["codex", "exec", p],   timeoutMs: 90_000 },
+  { id: "gemini",   kind: "agent", argv: p => ["gemini", "-p", p],    timeoutMs: 90_000 },
   {
     id: "ollama",
     kind: "local",
-    // --format json constrains decoding to valid JSON, which matters far more
-    // than model size for this job: we need a parseable answer, not prose.
+    // --format json constrains decoding to valid JSON, which matters more for
+    // a small model than size does: we need a parseable answer, not prose.
     argv: p => ["ollama", "run", OLLAMA_MODEL, "--format", "json", p],
-    timeoutMs: 45_000,
+    timeoutMs: 60_000,
   },
-  { id: "claude",   kind: "agent", argv: p => ["claude", "-p", p],      timeoutMs: 90_000 },
-  { id: "opencode", kind: "agent", argv: p => ["opencode", "run", p],   timeoutMs: 90_000 },
-  { id: "gemini",   kind: "agent", argv: p => ["gemini", "-p", p],      timeoutMs: 90_000 },
-  { id: "codex",    kind: "agent", argv: p => ["codex", "exec", p],     timeoutMs: 90_000 },
 ]
 
 export function detectProviders(): Provider[] {
   return CANDIDATES.filter(p => Bun.which(p.argv("x")[0]) !== null)
 }
 
-export function pickProvider(preference: string, want: "local" | "any"): Provider | null {
+/**
+ * Pick a provider.
+ *
+ * `tier` no longer steers the choice toward local or hosted -- both jobs want
+ * the best available model. It is kept because the caller uses it to decide
+ * how much of the OS command surface to send, which does still depend on
+ * whether the far end is a 3B model on this laptop or not.
+ */
+export function pickProvider(preference: string, _tier: "local" | "any"): Provider | null {
   const available = detectProviders()
   if (preference && preference !== "auto") {
-    return available.find(p => p.id === preference) ?? null
+    return available.find(p => p.id === preference) ?? available[0] ?? null
   }
-  // Routing prefers a local model: it is faster, free, and the job is small
-  // enough that a 3B model does it well. Planning may need the better one.
-  if (want === "local") {
-    return available.find(p => p.kind === "local") ?? available[0] ?? null
-  }
-  return available.find(p => p.kind === "agent") ?? available[0] ?? null
+  return available[0] ?? null
 }
 
 export async function ask(provider: Provider, prompt: string): Promise<string> {
