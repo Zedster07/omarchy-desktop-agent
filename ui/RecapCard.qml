@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
+import QtQuick.Effects
 import "."
 
 // What the agent just did, after it has stopped doing it.
@@ -41,18 +42,35 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
 
-    BorderSurface {
+    Item {
       id: card
       width: parent.width
       implicitHeight: col.implicitHeight + Style.spacing.popupPadding * 2
-      radius: Style.cornerRadius
-      color: Theme.cardBackground
-      borderSpec: Border.surfaceSpec("popups", "border",
-                                     root.troubled ? Theme.danger : Theme.cardBorder,
-                                     Math.max(1, Style.normalBorderWidth), "border-alpha")
 
       opacity: root.active ? 1 : 0
       Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
+
+      MultiEffect {
+        anchors.fill: plate
+        source: plate
+        shadowEnabled: true
+        shadowColor: Util.alpha(root.troubled ? Theme.danger : Theme.ok, 0.35)
+        shadowBlur: 0.9
+        shadowScale: 1.02
+      }
+
+      Rectangle {
+        id: plate
+        anchors.fill: parent
+        radius: Style.cornerRadius
+        color: Theme.cardBackground
+      }
+
+      HudScanlines { anchors.fill: parent; color: Theme.cardText }
+      HudFrame {
+        anchors.fill: parent
+        color: root.troubled ? Theme.danger : Theme.ok
+      }
 
       // Hovering means you are still reading it, so the dismiss countdown
       // pauses rather than yanking the card out from under your eyes.
@@ -88,6 +106,8 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.spacing.xxs
 
+            HudLabel { text: "run complete"; tone: Theme.cardText }
+
             Text {
               text: "Desktop Agent finished"
               color: Theme.cardText
@@ -112,7 +132,7 @@ Item {
           }
         }
 
-        Rectangle { width: parent.width; height: 1; color: Util.alpha(Theme.cardText, 0.14) }
+        HudRail { width: parent.width; color: root.troubled ? Theme.danger : Theme.ok }
 
         Column {
           width: parent.width

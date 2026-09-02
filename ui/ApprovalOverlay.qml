@@ -149,16 +149,21 @@ Item {
           opacity: root.stagger(0.15, 0.4)
 
           HudRing {
+            id: dial
             anchors.verticalCenter: parent.verticalCenter
+            implicitWidth: Style.space(84)
+            implicitHeight: Style.space(84)
+            ticks: 40
             value: root.fraction
             color: root.urgentClock ? Theme.danger : root.tone
             label: root.remainingSec > 0 ? String(root.remainingSec) : ""
+            sublabel: "sec"
             fontFamily: Style.font.family
           }
 
           Column {
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - Style.space(46) - Style.spacing.xxl
+            width: parent.width - dial.implicitWidth - Style.spacing.xxl
             spacing: Style.spacing.xs
 
             HudLabel {

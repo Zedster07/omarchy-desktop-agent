@@ -8,3 +8,4 @@ HudRing 1.0 HudRing.qml
 HudRail 1.0 HudRail.qml
 HudLabel 1.0 HudLabel.qml
 HudScanlines 1.0 HudScanlines.qml
+HudCore 1.0 HudCore.qml

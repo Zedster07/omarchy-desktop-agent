@@ -16,13 +16,38 @@ Item {
   property color trackColor: Util.alpha(Color.foreground, 0.14)
   property real thickness: Math.max(2, Style.space(3))
   property string label: ""
+  property string sublabel: ""
   property string fontFamily: Style.font.family
+  /** Graduation marks around the dial. 0 disables them. */
+  property int ticks: 0
 
   implicitWidth: Style.space(46)
   implicitHeight: Style.space(46)
 
   readonly property real _r: Math.min(width, height) / 2 - thickness / 2
   readonly property real _v: Math.max(0, Math.min(1, value))
+
+  // Graduations. A bare arc is a progress bar bent into a circle; the marks
+  // are what make it read as a dial being watched.
+  Item {
+    anchors.fill: parent
+    visible: root.ticks > 0
+    Repeater {
+      model: root.ticks
+      Item {
+        anchors.fill: parent
+        rotation: index * (360 / Math.max(1, root.ticks))
+        Rectangle {
+          readonly property bool major: index % 5 === 0
+          anchors.horizontalCenter: parent.horizontalCenter
+          y: root.height / 2 - root._r - Style.space(6)
+          width: 1
+          height: major ? Style.space(5) : Style.space(2.5)
+          color: Util.alpha(root.color, major ? 0.45 : 0.22)
+        }
+      }
+    }
+  }
 
   Shape {
     anchors.fill: parent
@@ -58,13 +83,29 @@ Item {
     }
   }
 
-  Text {
+  Column {
     anchors.centerIn: parent
-    text: root.label
-    color: root.color
-    font.family: root.fontFamily
-    font.pixelSize: Style.font.bodySmall
-    font.bold: true
-    visible: root.label !== ""
+    spacing: 0
+
+    Text {
+      anchors.horizontalCenter: parent.horizontalCenter
+      text: root.label
+      color: root.color
+      font.family: root.fontFamily
+      font.pixelSize: root.width > Style.space(70) ? Style.font.heading : Style.font.bodySmall
+      font.bold: true
+      visible: root.label !== ""
+    }
+
+    Text {
+      anchors.horizontalCenter: parent.horizontalCenter
+      text: root.sublabel
+      color: Util.alpha(root.color, 0.55)
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.letterSpacing: 1.2
+      font.capitalization: Font.AllUppercase
+      visible: root.sublabel !== ""
+    }
   }
 }
