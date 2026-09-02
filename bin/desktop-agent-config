@@ -16,6 +16,7 @@ a config file that echoes secrets ends up in a screenshot eventually.
   desktop-agent-config set-secret <key>      # reads stdin if omitted
   desktop-agent-config clear-secret
   desktop-agent-config apply-stt             # push STT settings into voxtype
+  desktop-agent-config show-voxtype          # voxtype config, secrets masked
 """
 import json
 import os
@@ -91,16 +92,27 @@ def vox_write(text):
 
 
 def vox_set(text, section, key, value, quote=True):
-    """Set key inside [section], preserving comments and everything else."""
+    """Set key inside [section], preserving comments and everything else.
+
+    The header match uses [^\\S\\n]* rather than \\s*: \\s* is greedy across
+    newlines, so it swallowed the line break after [whisper] and the first
+    inserted key landed on the header line as `[whisper]remote_model = ...`.
+    That is a TOML parse error, and because the section regex then no longer
+    matched, the next write appended a SECOND [whisper] section -- a duplicate
+    key error on top of it. One character of regex took voxtype down twice.
+    """
     val = f'"{value}"' if quote else str(value)
-    sec = re.search(rf"(?m)^\[{re.escape(section)}\]\s*$", text)
+    sec = re.search(rf"(?m)^\[{re.escape(section)}\][^\S\n]*$", text)
     if not sec:
         return text.rstrip() + f"\n\n[{section}]\n{key} = {val}\n"
     start = sec.end()
     nxt = re.search(r"(?m)^\[", text[start:])
     end = start + (nxt.start() if nxt else len(text) - start)
     body = text[start:end]
-    line = re.search(rf"(?m)^\s*#?\s*{re.escape(key)}\s*=.*$", body)
+    # [^\S\n]* again, not \s*. At position 0 of the body, ^\s* happily matches
+    # the leading newline, so the replacement lands where that newline was and
+    # welds the key onto the section header. Same mistake, second place.
+    line = re.search(rf"(?m)^[^\S\n]*#?[^\S\n]*{re.escape(key)}[^\S\n]*=.*$", body)
     if line:
         body = body[:line.start()] + f"{key} = {val}" + body[line.end():]
     else:
@@ -115,6 +127,22 @@ def has_secret():
 def restart_voxtype():
     subprocess.run(["systemctl", "--user", "restart", "voxtype"],
                    capture_output=True)
+
+
+def redacted_config():
+    """The voxtype config with any secret masked.
+
+    Exists because the safe path has to be the CONVENIENT one. A tool that
+    refuses to print secrets does not help if inspecting the file is one `cat`
+    away -- which is exactly how a key ended up in a terminal transcript.
+    """
+    out = []
+    for line in vox_read().splitlines():
+        if re.match(r'\s*(remote_api_key|api_key)\s*=', line):
+            out.append(re.sub(r'=\s*".*"', '= "<redacted>"', line))
+        else:
+            out.append(line)
+    return "\n".join(out)
 
 
 def apply_stt():
@@ -137,6 +165,32 @@ def apply_stt():
                 BIAS_PROMPT if v.get("biasPrompt", True) else "")
     vox_write(t)
     restart_voxtype()
+
+    # Verify rather than assume. voxtype 0.7.5 accepts mode = "remote" in its
+    # config without complaint and then transcribes locally anyway -- the
+    # remote strings are in the binary but the path is not wired. A setting
+    # that silently does nothing is worse than one that refuses, so check the
+    # daemon's own log for which transcriber it actually brought up.
+    if mode == "remote":
+        import time
+        time.sleep(4)
+        log = subprocess.run(
+            ["journalctl", "--user", "-u", "voxtype", "-n", "40", "--no-pager"],
+            capture_output=True, text=True).stdout
+        recent = log[-4000:]
+        if "remote transcriber" not in recent.lower() and "Loading transcription model" in recent:
+            print("stt -> remote requested, but this voxtype build ignored it "
+                  "and loaded a local model instead.", file=sys.stderr)
+            print("      voxtype 0.7.5 does not implement remote STT; 1.0.1 is in the AUR.",
+                  file=sys.stderr)
+            print("      Falling back to local so dictation keeps working.", file=sys.stderr)
+            d["voice"]["sttMode"] = "local"
+            save(d)
+            t2 = vox_set(vox_read(), "whisper", "mode", "local")
+            vox_write(t2)
+            restart_voxtype()
+            return 3
+
     print(f"stt -> {mode}" + (f" ({v['remoteModel']})" if mode == "remote"
                               else f" ({v['localModel']})"))
     return 0
@@ -205,6 +259,10 @@ def main(argv):
 
     if cmd == "apply-stt":
         return apply_stt()
+
+    if cmd == "show-voxtype":
+        print(redacted_config())
+        return 0
 
     print(__doc__, file=sys.stderr)
     return 2

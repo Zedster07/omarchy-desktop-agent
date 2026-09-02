@@ -58,9 +58,16 @@ Panel {
 
   function setCfg(key, value) {
     root.busy = key
+    // Voice settings push themselves into voxtype straight away. Requiring a
+    // separate Apply meant the panel could show "remote / key set" while
+    // voxtype was still transcribing locally -- configured-looking and inert,
+    // which is worse than an obvious failure.
+    root.applyAfterSet = key.indexOf("voice.") === 0
     setProc.command = ["desktop-agent-config", "set", key, String(value)]
     setProc.running = true
   }
+
+  property bool applyAfterSet: false
 
   function applyStt() {
     root.busy = "stt"
@@ -120,9 +127,16 @@ Panel {
       }
     }
   }
-  Process { id: setProc; onExited: { root.busy = ""; cfgProc.running = true } }
+  Process {
+    id: setProc
+    onExited: {
+      cfgProc.running = true
+      if (root.applyAfterSet) { root.applyAfterSet = false; root.applyStt() }
+      else root.busy = ""
+    }
+  }
   Process { id: applyProc; command: ["desktop-agent-config", "apply-stt"]; onExited: { root.busy = ""; cfgProc.running = true } }
-  Process { id: secretProc; onExited: { root.busy = ""; cfgProc.running = true } }
+  Process { id: secretProc; onExited: { cfgProc.running = true; root.applyStt() } }
   Process { id: openProc }
 
   Component.onCompleted: refresh()
@@ -454,7 +468,7 @@ Panel {
               spacing: Style.spacing.controlGap
 
               Button {
-                text: root.busy === "stt" ? "Applying…" : "Apply to voxtype"
+                text: root.busy === "stt" ? "Applying…" : "Re-apply"
                 foreground: Theme.ok; accent: Theme.ok
                 bordered: true; focusable: true
                 fontSize: Style.font.bodySmall
