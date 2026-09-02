@@ -338,7 +338,7 @@ async function runCommand(phrase: string) {
   // that can look at the screen. Opt-in, and gated by the desktop policy the
   // whole way through rather than by anything decided here.
   if (!match && !aiProposal && assist === "route+plan+agent") {
-    const target = await settingStr("agent.overlayTarget", "dada.desktop-agent")
+    const target = await settingStr("agent.overlayTarget", "io.github.zedster07.desktop-agent")
     if (!(await overlayReady(target))) {
       await clearHud({ state: "error", mode: "command", transcript: phrase,
         errorText: "Agent needs the desktop policy plugin loaded" }, 3200)

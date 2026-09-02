@@ -163,6 +163,40 @@ case "${1:-doctor}" in
     keybinds
     doctor
     ;;
+  mcp-install)
+    # Register the MCP server that ships WITH this plugin.
+    #
+    # Point it at our own copy rather than at whatever is in ~/.config: the
+    # server, the policy engine and the approval overlay are one thing, and a
+    # plugin that half-works because it is driving someone else's server is
+    # not a plugin anyone can ship.
+    have bun || { bad "bun is required for the agent half"; exit 1; }
+    if [[ ! -d "$PLUGIN_DIR/server/node_modules" ]]; then
+      bold "Installing server dependencies"
+      (cd "$PLUGIN_DIR/server" && bun install) || { bad "bun install failed"; exit 1; }
+    fi
+    python3 - "$PLUGIN_DIR" "$(command -v bun)" <<'PY'
+import json, os, shutil, sys, time
+plugin, bun = sys.argv[1], sys.argv[2]
+cfg = os.path.expanduser("~/.claude.json")
+if not os.path.exists(cfg):
+    print("  no ~/.claude.json — start Claude Code once first"); sys.exit(1)
+shutil.copy(cfg, f"{cfg}.bak.{int(time.time())}")
+d = json.load(open(cfg))
+servers = d.setdefault("mcpServers", {})
+servers["desktop"] = {
+    "type": "stdio",
+    "command": bun,
+    "args": ["run", os.path.join(plugin, "server", "server.ts")],
+    "env": {},
+}
+json.dump(d, open(cfg, "w"), indent=2)
+print(f"  registered: {os.path.join(plugin, 'server', 'server.ts')}")
+print("  (previous ~/.claude.json backed up alongside)")
+PY
+    ok "MCP server registered — restart Claude Code to pick it up"
+    ;;
+
   install-stt-unit)
     # Called by desktop-agent-config when someone opts into local. The unit is
     # not installed at plugin-install time because most users will never run a
@@ -174,5 +208,5 @@ case "${1:-doctor}" in
     systemctl --user daemon-reload
     ;;
   keybinds) keybinds ;;
-  *) echo "usage: desktop-agent [doctor|setup|keybinds]"; exit 2 ;;
+  *) echo "usage: desktop-agent [doctor|setup|mcp-install|keybinds]"; exit 2 ;;
 esac

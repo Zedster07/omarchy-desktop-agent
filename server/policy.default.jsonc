@@ -1,0 +1,521 @@
+// ============================================================================
+//  Desktop control policy  --  read fresh on EVERY desktop_* tool call.
+//  Edit this file and save: the change applies to the very next tool call.
+//  No restart needed. This is your live leash.
+//
+//  Emergency stop:  set "enabled": false  (or just delete/rename this file --
+//                   a missing or malformed policy denies everything).
+//
+//  HOW A DECISION IS MADE
+//  Three dimensions are evaluated independently, then the MOST RESTRICTIVE
+//  result wins:
+//        1. capabilities  -- may the agent do this kind of thing at all?
+//        2. workspaces    -- is the target on a workspace it may touch?
+//        3. apps          -- may it do this to this particular window?
+//
+//  Within one dimension, the LAST matching pattern wins. So put broad rules
+//  first and exceptions last.
+//
+//  Actions:  "allow"  do it silently
+//            "ask"    pop the approval overlay on the bar before doing it
+//            "deny"   refuse, and tell the agent why
+//
+//  Anything not matched by any pattern is DENIED. That is deliberate.
+//  Every refusal prints the exact rule that caused it, so run
+//  `desktop_policy` if you are unsure why something was blocked.
+// ============================================================================
+{
+  // Master switch. false => every desktop_* tool refuses immediately.
+  "enabled": false,
+
+  // --------------------------------------------------------------------------
+  //  YOLO -- a time-boxed grant that stops the agent interrupting you.
+  //
+  //  Granted from the bar: click the Desktop Agent icon and pick a duration.
+  //  While the lease runs, every "ask" below is auto-approved silently.
+  //
+  //  What a lease does NOT do, ever:
+  //    * it does not touch "deny". Password managers, 2FA windows, typing into
+  //      terminals, special workspaces and Claude Code's own window stay
+  //      refused exactly as they are now. The lease removes the interruption,
+  //      never the boundary.
+  //    * it does not auto-approve destructive commands. rm, dd, mkfs, chmod,
+  //      kill, systemctl, shutdown, package managers, curl/wget and the rest
+  //      still raise the overlay while yolo is on -- so the irreversible step
+  //      stays the one thing you are shown. That list lives in server.ts as
+  //      NEVER_YOLO and is not editable from here on purpose. If you actually
+  //      want one of them unattended, name it here: "rm": "allow" in
+  //      run.commands works, because then you chose it rather than a timer.
+  //
+  //  The lease is a timestamp in ~/.local/state/desktop-agent/yolo.json. It
+  //  expires by itself with nothing running -- deleting that file, or flipping
+  //  the kill switch, ends it immediately.
+  // --------------------------------------------------------------------------
+  "yolo": {
+    // Set false and no lease can ever take effect, whatever the bar says.
+    "enabled": false,
+    // Hard ceiling on a single lease, re-checked on every call. A lease longer
+    // than this is clamped, not honoured.
+    "maxMinutes": 60
+  },
+
+  // --------------------------------------------------------------------------
+  //  CAPABILITIES -- what kinds of action are permitted, ignoring the target.
+  // --------------------------------------------------------------------------
+  "capabilities": {
+    "observe": "allow", // list windows, monitors, workspaces, cursor position
+    "screenshot": "allow", // capture the screen (denied apps are blacked out)
+    "workspace": "allow", // switch/rename workspaces
+    "focus": "allow", // move focus to a window
+    // RELAXED 2026-08-27 for the Daltech demo recordings. A demo is hundreds of
+    // moves, clicks and keystrokes; at "ask" each one raises an overlay, which
+    // both makes it unusable and trains you to approve without reading.
+    // Put these back to "ask" when the recordings are done — this file is read
+    // fresh on every call, so the change takes effect immediately either way.
+    "manage": "allow", // move, resize, float, fullscreen, close, kill
+    "launch": "allow", // start a new application
+    "type": "allow", // enter text
+    "key": "allow", // press keys and shortcuts
+    "mouse": "allow", // move the cursor, click, scroll, drag
+    "run": "allow", // run a command -- gated per-command in "run" below
+    "write": "allow", // create/edit files -- gated per-path in "paths" below
+    // The agent's OWN browser -- a separate empty profile, no extensions, none
+    // of your logins. Reading pages through it replaces screenshots for
+    // anything on the web. Starts at "ask" so you see the first few; there is
+    // little reason to keep it there once you have watched it work.
+    "browser": "ask"
+  },
+
+  // --------------------------------------------------------------------------
+  //  AGENTS -- which caller identity may use which capability.
+  //
+  //  CAVEAT, read this before relying on it: MCP gives the server no way to
+  //  tell which Claude Code subagent is calling. Every call therefore arrives
+  //  under one identity, taken from $DESKTOP_AGENT_IDENTITY and defaulting to
+  //  "claude". Run `desktop_policy` to see the identity in force.
+  //
+  //  So this section is only useful if you run a second MCP entry with a
+  //  different DESKTOP_AGENT_IDENTITY in its env. For a single entry it is
+  //  effectively a global switch. Capability, workspace and app rules are the
+  //  dimensions that actually do the work.
+  //
+  //  Leave it empty (or delete it) and every identity gets identical access.
+  //  The moment you put one entry in it, it becomes an allowlist and any
+  //  identity not matched is denied. Keys are globs matched against the
+  //  identity; "*" inside a value sets every capability at once.
+  //
+  //      "claude":  { "*": "allow" },
+  //      "ci":      { "observe": "allow", "screenshot": "allow", "*": "deny" }
+  // --------------------------------------------------------------------------
+  "agents": {},
+
+  // --------------------------------------------------------------------------
+  //  WORKSPACES -- which workspaces the agent may observe and act on.
+  //  Match on the name ("3", "special:magic") or "id:3".
+  //
+  //  To pen the agent into workspaces 8 and 9 only, replace the block with:
+  //      "8": "allow",
+  //      "9": "allow"
+  //  ...and nothing else. Everything unmatched is denied.
+  // --------------------------------------------------------------------------
+  "workspaces": {
+    "*": "allow",
+    "special:*": "deny" // scratchpads stay private
+  },
+
+
+  // --------------------------------------------------------------------------
+  //  PATHS -- where desktop_write and desktop_edit may go.
+  //
+  //  Matched against the fully resolved absolute path: "~" is expanded, "." and
+  //  ".." are collapsed, and symlinks are followed BEFORE matching -- so a link
+  //  in an allowed directory cannot be used to reach a denied one.
+  //
+  //  Last match wins, and anything unmatched is denied. "*" spans "/" here, so
+  //  "~/Work/*" already covers every depth beneath it.
+  //
+  //  SCOPE, so this is not mistaken for a sandbox: these rules govern the
+  //  agent's own desktop_write and desktop_edit calls. They do NOT constrain a
+  //  program the agent runs -- ffmpeg, git and tar write wherever they like.
+  //  "run.commands" is the dimension that gates those.
+  // --------------------------------------------------------------------------
+  "paths": {
+    // Nothing by default. Say yes on purpose.
+    "*": "ask",
+
+    // Work the agent actually does.
+    "~/Work/*": "allow",
+    "~/Videos/*": "allow",
+    "~/Pictures/*": "allow",
+    "~/Documents/*": "allow",
+    "~/Downloads/*": "allow",
+    "~/Desktop/*": "allow",
+    "/tmp/*": "allow",
+
+    // The leash does not edit itself. Its own policy, its own system prompt,
+    // its own lease -- an agent that can rewrite these is not restricted by
+    // them, it is restricted until it decides otherwise.
+    "~/.config/desktop-agent/*": "deny",
+    "~/.claude/*": "deny",
+    "~/.local/state/desktop-agent/*": "deny",
+    "~/.local/bin/*": "deny", // desktop-yolo lives here
+
+    // Secrets. The agent can already read most of these (cat is allowed); what
+    // it must not do is plant a key or rewrite a known_hosts.
+    "~/.ssh/*": "deny",
+    "~/.gnupg/*": "deny",
+    "~/.aws/*": "deny",
+    "~/.netrc": "deny",
+    "~/.git-credentials": "deny",
+    "~/.npmrc": "deny",
+    "*.env": "deny",
+    "*/.env.*": "deny",
+    "*credentials*": "deny",
+    "*firebase-adminsdk*": "deny",
+
+    // Anything that executes on its own the next time you log in or open a
+    // shell. A write here is delayed code execution, not a file change.
+    "~/.bashrc": "deny",
+    "~/.zshrc": "deny",
+    "~/.profile": "deny",
+    "~/.bash_profile": "deny",
+    "~/.zprofile": "deny",
+    "~/.config/autostart/*": "deny",
+    "~/.config/systemd/*": "deny",
+    "~/.config/environment.d/*": "deny",
+    "*/.git/hooks/*": "deny",
+
+    // Break these and the desktop does not come back up.
+    "~/.config/hypr/*": "deny",
+    "~/.config/omarchy/*": "deny",
+    "~/.config/uwsm/*": "deny",
+
+    // Not the user's to edit, and root-owned anyway.
+    "/etc/*": "deny",
+    "/usr/*": "deny",
+    "/boot/*": "deny",
+    "/bin/*": "deny",
+    "/sbin/*": "deny",
+    "/lib/*": "deny",
+    "/var/*": "deny",
+    "/opt/*": "deny",
+    "/sys/*": "deny",
+    "/proc/*": "deny",
+    "/dev/*": "deny",
+    "/run/*": "deny"
+  },
+
+  // --------------------------------------------------------------------------
+  //  WRITE -- limits that apply to every desktop_write and desktop_edit.
+  // --------------------------------------------------------------------------
+  "write": {
+    // Refuse a single write larger than this. Catches a runaway generation
+    // before it fills the disk, not a determined agent.
+    "maxBytes": 1000000,
+    // Copy a file aside before overwriting or editing it. Backups go to
+    // ~/.local/state/desktop-agent/backups/ so they do not litter your tree.
+    "backup": true
+  },
+
+  // --------------------------------------------------------------------------
+  //  APPS -- which windows the agent may see and control.
+  //
+  //  Patterns match against, in order of precision:
+  //      "class:<class>"          e.g. "class:chromium"
+  //      "initialclass:<class>"
+  //      "title:<title>"          e.g. "title:*Gmail*"
+  //      "initialtitle:<title>"
+  //      "pid:<pid>"
+  //  A pattern with no prefix is matched against the class AND the title.
+  //
+  //  A value is either a single action applied to all four verbs, or an object
+  //  naming them individually:
+  //      "see"     appear in window lists; visible in screenshots
+  //      "focus"   may be focused
+  //      "manage"  may be moved, resized, closed, killed
+  //      "input"   may receive typing, key presses and clicks
+  //
+  //  Omitted verbs in an object fall back to "deny".
+  // --------------------------------------------------------------------------
+  "apps": {
+    // Baseline: everything is visible and fully controllable...
+    "*": "allow",
+
+    // ...then carve out the things an agent must never touch.
+
+    // Password managers and secret stores: fully invisible.
+    "class:1Password": "deny",
+    "class:*keepass*": "deny",
+    "class:*bitwarden*": "deny",
+    "class:org.gnome.Seahorse*": "deny",
+    "title:*1Password*": "deny",
+    "title:*Bitwarden*": "deny",
+
+    // Banking and auth pages: invisible even though the browser is allowed.
+    "title:*Sign in*": { "see": "allow", "focus": "allow" },
+    "title:*Login*": { "see": "allow", "focus": "allow" },
+    // ...but the Daltech staging apps are the thing being demonstrated, and both
+    // carry DALTECH in the window title. This is narrower than relaxing the two
+    // rules above, which would hand the agent every login page you ever open,
+    // your bank included. It sits BEFORE the 2FA denies on purpose: last match
+    // wins, so a Daltech window showing a one-time code is still refused.
+    "title:*Daltech*": "allow",
+    "title:*DALTECH*": "allow",
+
+    "title:*2FA*": "deny",
+    "title:*One-Time*": "deny",
+    "title:*Authenticator*": "deny",
+
+    // Terminals: readable and focusable, but never typed into. A shell is a
+    // confused-deputy machine -- if the agent wants a command it has `bash`,
+    // where you can see and gate it, instead of blind keystrokes.
+    "class:org.wezfurlong.wezterm": { "see": "allow", "focus": "allow", "manage": "allow" },
+    "class:foot": { "see": "allow", "focus": "allow", "manage": "allow" },
+    "class:Alacritty": { "see": "allow", "focus": "allow", "manage": "allow" },
+    "class:com.mitchellh.ghostty": { "see": "allow", "focus": "allow", "manage": "allow" },
+
+    // The agent's OWN browser (see the "browser" section below). Its own empty
+    // profile, none of your logins -- so unlike your Chromium above, it gets
+    // full control of it. This is what makes a dedicated browser worth having:
+    // the agent stops needing access to yours.
+    "class:agent-browser": "allow",
+
+    // Communication: let it read and click, but never send on your behalf
+    // without a prompt. Change "input" to "allow" when you want it to reply.
+    "class:chrome-app.slack.com*": { "see": "allow", "focus": "allow", "manage": "allow", "input": "ask" },
+    "class:chrome-mail.google.com*": { "see": "allow", "focus": "allow", "manage": "allow", "input": "ask" }
+  },
+
+  // --------------------------------------------------------------------------
+  //  LAUNCH -- the only applications the agent may start, by friendly name.
+  //  The agent passes a name, never a command line, so it cannot invent one.
+  //  Add "args": true to let it append arguments (e.g. a URL to open).
+  // --------------------------------------------------------------------------
+  "launch": {
+    "browser": { "command": ["chromium"], "args": true, "action": "ask" },
+    "terminal": { "command": ["foot"], "action": "ask" },
+    // args: true so it can open straight at a path it already located, rather
+    // than launching at the default folder and hunting through the UI.
+    "files": { "command": ["nautilus"], "args": true, "action": "ask" },
+    "editor": { "command": ["nvim"], "action": "deny" }
+  },
+
+  // --------------------------------------------------------------------------
+  //  FORBIDDEN KEYS -- refused even when "key" is "allow". Compared against
+  //  the normalised chord, e.g. "SUPER SHIFT+e", so order of mods is fixed:
+  //  SUPER CTRL ALT SHIFT.
+  // --------------------------------------------------------------------------
+  "forbidKeys": [
+    "SUPER SHIFT+e", // exit Hyprland
+    "SUPER SHIFT+q", // kill session
+    "CTRL ALT+Delete",
+    "CTRL ALT+F*", // VT switch
+    "SUPER+l", // lock screen
+    "*+Print" // screenshot bindings
+  ],
+
+  // --------------------------------------------------------------------------
+  //  RUN -- which programs desktop_run may execute.
+  //
+  //  desktop_run takes a program plus an argument LIST, never a shell line.
+  //  There is no pipe, no glob, no $(...) and no redirection, which is what
+  //  makes the rules below mean what they say: the first token is always the
+  //  real binary, so "bash" cannot be smuggled in as "sh -c ...".
+  //
+  //  Matching is the usual last-wins glob, against both the name as given and
+  //  its basename. Anything unmatched is "ask", so a program nobody thought to
+  //  list stops and prompts rather than silently running or silently failing.
+  //
+  //  Prefer this over driving a GUI: one `fd` beats a file-manager launch plus
+  //  five screenshots and a guessed click.
+  // --------------------------------------------------------------------------
+  "run": {
+    // Kill a runaway command, and keep a huge output from flooding the model.
+    "timeoutMs": 15000,
+    "maxOutputBytes": 100000,
+
+    "commands": {
+      // Unlisted => ask. Fail-closed, same as every other dimension here.
+      "*": "ask",
+
+      // Reading and searching the filesystem: the whole point of this section.
+      "ls": "allow",
+      "eza": "allow",
+      "find": "allow",
+      "fd": "allow",
+      "rg": "allow",
+      "grep": "allow",
+      "cat": "allow",
+      "bat": "allow",
+      "head": "allow",
+      "tail": "allow",
+      "wc": "allow",
+      "stat": "allow",
+      "file": "allow",
+      "du": "allow",
+      "df": "allow",
+      "realpath": "allow",
+      "basename": "allow",
+      "dirname": "allow",
+      "readlink": "allow",
+      "which": "allow",
+      "echo": "allow",
+      "date": "allow",
+      "jq": "allow",
+      "git": "allow",
+      "xdg-mime": "allow",
+
+      // Inspect media without being able to write any. ffmpeg itself stays at
+      // "ask" (it takes -y and an output path); ffprobe only ever reads.
+      "ffprobe": "allow",
+
+      // The bare "omarchy" command is a router over ~427 subcommands, and the
+      // match here is on the binary name only -- the arguments are never read.
+      // So "omarchy": "allow" would quietly re-open half the deny list below:
+      //     omarchy hyprland ...      = hyprctl, denied by name
+      //     omarchy shell <t> <m>     = qs ipc call, denied by name
+      //     omarchy system shutdown   = shutdown, denied by name
+      //     omarchy system factory reset
+      //     omarchy pkg / install / remove / refresh
+      // Kept at "ask" so the subcommand is on the overlay where you can read it,
+      // and listed in NEVER_YOLO so a lease cannot promote it.
+      "omarchy": "ask",
+
+      // Same reasoning for the individual binaries, which are all on PATH at
+      // /usr/share/omarchy/bin. Deny the family, then name the exceptions --
+      // last match wins, so the allows below still stand.
+      "omarchy-*": "deny",
+
+      // Start and stop the screen recorder without an overlay in every clip.
+      // omarchy-capture-screenrecording writes to ~/Videos and takes no shell.
+      "omarchy-capture-screenrecording": "allow",
+
+      // Theming is cosmetic, reversible, and the agent gets asked for it a lot.
+      "omarchy-theme-list": "allow",
+      "omarchy-theme-set": "allow",
+
+      // ~/.local/bin/daltech-rec start|stop — a fixed two-branch wrapper.
+      //
+      // Needed because gpu-screen-recorder inherits the caller's stdout (only its
+      // stderr is redirected), so desktop_run waits for an EOF that never arrives
+      // and times out at 15s while the recording is in fact running. desktop_run
+      // passes a program and an argument list, never a shell line, so it cannot
+      // redirect — the wrapper is the only place that can.
+      //
+      // It takes no free-form input: anything other than start|stop exits 2.
+      "daltech-rec": "allow",
+
+      // ----------------------------------------------------------------------
+      // Denied because they are an UNGATED COPY of the desktop tools. Letting
+      // these through would mean two doors to the same room, one of them with
+      // no approval prompt, no audit line and no screenshot redaction.
+      "hyprctl": "deny", // = desktop_window / desktop_workspace / desktop_mouse
+      "ydotool": "deny", // = desktop_mouse / desktop_key
+      "wtype": "deny", // = desktop_type
+      "dotool": "deny",
+      "wlrctl": "deny",
+      "grim": "deny", // = desktop_screenshot, but with NO redaction
+      "slurp": "deny",
+      "wf-recorder": "deny",
+      "wl-copy": "deny", // clipboard is how desktop_type moves text
+      "wl-paste": "deny",
+      "qs": "deny", // would drive the approval overlay itself
+      "quickshell": "deny",
+      "desktop-yolo": "deny", // would let the agent grant itself a free pass
+      // (omarchy-* is already denied as a family above; these stay for the
+      // record of why -- they are desktop_launch without the gate.)
+      "omarchy-launch-editor": "deny",
+      "omarchy-launch-tui": "deny",
+      "uwsm-app": "deny",
+      "setsid": "deny",
+      "nohup": "deny",
+
+      // Denied because they re-enter a shell and launder every rule above.
+      // This is the line that makes the denials above hold.
+      "sh": "deny",
+      "bash": "deny",
+      "zsh": "deny",
+      "fish": "deny",
+      "dash": "deny",
+      "env": "deny",
+      "xargs": "deny",
+      "find -exec": "deny", // cosmetic reminder; find itself is allowed
+      "perl": "deny",
+      "python": "deny",
+      "python3": "deny",
+      "ruby": "deny",
+      "node": "deny",
+      "bun": "deny",
+      "awk": "deny", // awk system() is a shell
+      "gawk": "deny",
+      "ssh": "deny",
+
+      // Denied because they escalate.
+      "sudo": "deny",
+      "pkexec": "deny",
+      "doas": "deny",
+      "su": "deny"
+    }
+  },
+
+  // --------------------------------------------------------------------------
+  //  BROWSER -- the agent's own browser, driven over the DevTools protocol.
+  //
+  //  It is a SEPARATE browser from yours: its own profile under
+  //  ~/.local/state/desktop-agent/browser/, no extensions, no cookies, no
+  //  saved passwords, none of your history. The agent can move around in it
+  //  freely because there is nothing of yours inside it to reach.
+  //
+  //  Two things this deliberately does NOT do:
+  //
+  //    * It never attaches to a browser it did not start. Chromium sits under
+  //      1Password, Obsidian, your IDE and every other Electron app on this
+  //      machine, so a tool that attached to "any debugging port" would read
+  //      straight through the "apps" rules above that exist to keep the agent
+  //      out of exactly those windows. One endpoint, its own, or none.
+  //
+  //    * It does not make actions safe, only reads. An empty profile contains
+  //      nothing to leak, but the network is still the real network: a form
+  //      submitted from this browser is submitted for real. If you log it into
+  //      an account, that account's session lives in the profile from then on
+  //      -- so decide deliberately what, if anything, it may sign into.
+  //
+  //  The window carries class "agent-browser", so the "apps" section above can
+  //  treat it differently from your own Chromium. That is why this entry is in
+  //  "apps": full control of its own browser, none of yours.
+  // --------------------------------------------------------------------------
+  "browser": {
+    // Which browser to run. Empty = first of chromium/chrome/brave on PATH.
+    // Must be Chromium-family; Firefox does not speak this protocol.
+    "command": "",
+    // true hides the window entirely. Handy for background work, but you then
+    // cannot see what the agent is doing, so it defaults to visible.
+    "headless": false
+  },
+
+  // --------------------------------------------------------------------------
+  //  SAFETY RAILS
+  // --------------------------------------------------------------------------
+
+  // Never let the agent see or touch the terminal window Claude Code itself
+  // is running in. Resolved live by walking this server's process ancestry,
+  // so it keeps working if you move or retitle the window.
+  "protectSelf": true,
+
+  // Refuse to enter more than this many characters in one call.
+  "maxTextLength": 4000,
+
+  // Screenshot handling.
+  "screenshot": {
+    // Downscale wider captures before sending to the model. Keeps cost sane;
+    // 1920 keeps on-screen text legible. Set 0 to send at native resolution.
+    "maxWidth": 1920,
+    // Black out any window the agent may not "see", instead of refusing the
+    // whole capture. Set false to refuse instead.
+    "redactDenied": true
+  },
+
+  // Write one line per allowed action to ~/.local/share/desktop-agent/desktop.log
+  // so there is an audit trail of everything the agent did to your desktop.
+  "audit": true
+}

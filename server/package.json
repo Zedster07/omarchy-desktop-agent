@@ -1,0 +1,11 @@
+{
+  "name": "desktop-agent",
+  "version": "2.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Policy-gated Hyprland desktop control, exposed to Claude Code over MCP.",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0",
+    "zod": "^3.25.0"
+  }
+}

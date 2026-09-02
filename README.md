@@ -92,11 +92,17 @@ Most requests never reach a model at all.
 | **3 plan** | AI writes commands | something the list does not cover: playing a song, opening a URL |
 | **4 agent** | AI drives the desktop | anything not expressible as commands at all |
 
-Tier 4 is a hand-off to the MCP half of this project: an agent that can take a
+Tier 4 is a hand-off to the agent half of this plugin: it can take a
 screenshot, click a particular thing, and react to what it finds. It is opt-in,
-and the safety is not new — every action it takes goes through the same policy
-engine, approval overlay and audit log as any other agent action, and it fails
-closed if the plugin serving that overlay is not loaded.
+and the safety is not new — every action goes through the same policy engine,
+approval overlay and audit log, and it fails closed if the overlay is not
+loaded.
+
+That half ships here: `server/` is the MCP server, the policy engine and the
+Hyprland plumbing. `desktop-agent mcp-install` registers it with Claude Code,
+pointing at this plugin's copy. One plugin, one policy, one overlay — an
+install that half-works because it is driving someone else's server is not
+something anyone can ship.
 
 The agent gets `mcp__desktop__*` and nothing else: no file editing, no shell,
 no tools of its own. `--permission-mode bypassPermissions` means "do not add a

@@ -1,3 +1,4 @@
 node_modules/
 *.log
 models/
+server/node_modules/
