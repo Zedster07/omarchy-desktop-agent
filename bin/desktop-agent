@@ -78,6 +78,16 @@ doctor() {
     warn "no command-mode keybinding  (run: desktop-agent keybinds)"
   fi
 
+  echo; bold "Policy"
+  if [[ -f "$HOME/.config/desktop-agent/policy.jsonc" ]]; then
+    ok "policy present"
+  else
+    bad "no policy — everything gated will refuse  (run: desktop-agent setup)"; missing=1
+  fi
+  if [[ -e "${XDG_STATE_HOME:-$HOME/.local/state}/desktop-agent/disabled" ]]; then
+    warn "kill switch is ON — every gated action refuses"
+  fi
+
   echo; bold "Agent (optional — voice works without this)"
   if have bun; then ok "bun ($(command -v bun))"; else warn "bun is missing; the MCP half will not run"; fi
 
@@ -137,6 +147,18 @@ case "${1:-doctor}" in
   doctor) doctor ;;
   setup)
     mkdir -p "$HOME/.config/desktop-agent" "$UNITS"
+
+    # Seed the policy on first run.
+    #
+    # Without a policy the engine fails closed and refuses everything, which is
+    # correct and looks completely broken. An existing policy is never touched:
+    # it is the security boundary and the user's own edits live in it.
+    if [[ ! -f "$HOME/.config/desktop-agent/policy.jsonc" ]]; then
+      cp "$PLUGIN_DIR/server/policy.default.jsonc" "$HOME/.config/desktop-agent/policy.jsonc"
+      ok "policy seeded at ~/.config/desktop-agent/policy.jsonc"
+    else
+      ok "policy already present — left alone"
+    fi
     bun_path="$(command -v bun || echo /usr/bin/bun)"
     sed -e "s|ExecStart=.*voiced.ts|ExecStart=$bun_path $PLUGIN_DIR/voice/voiced.ts|" \
         "$PLUGIN_DIR/systemd/desktop-agent-voice.service" > "$UNITS/desktop-agent-voice.service"
