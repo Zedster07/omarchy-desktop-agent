@@ -1,86 +1,208 @@
 {
-  "$comment": "Built-in voice intents. Deliberately conservative: every action is a fixed argv with typed slots, so nothing here can be talked into running an arbitrary command. App launching uses an enum rather than a free-text slot for exactly that reason -- add your own in ~/.config/desktop-agent/intents.json.",
+  "$comment": "Built-in voice intents. Every action is a fixed argv with typed slots, so nothing here can be talked into running an arbitrary command. Hyprland actions use the Lua dispatcher API (hl.dsp.*): `hyprctl dispatch workspace 5` is the OLD syntax and now fails with a Lua parse error, which is exactly how the first working build managed to match a command correctly and then do nothing. Add your own in ~/.config/desktop-agent/intents.json.",
   "intents": [
     {
       "id": "workspace.switch",
-      "phrases": ["workspace {n}", "go to workspace {n}", "switch to workspace {n}"],
-      "slots": { "n": { "type": "number", "min": 1, "max": 10 } },
-      "run": ["hyprctl", "dispatch", "workspace", "{n}"],
+      "phrases": [
+        "workspace {n}",
+        "go to workspace {n}",
+        "switch to workspace {n}"
+      ],
+      "slots": {
+        "n": {
+          "type": "number",
+          "min": 1,
+          "max": 10
+        }
+      },
+      "run": [
+        "hyprctl",
+        "dispatch",
+        "hl.dsp.focus({ workspace = \"{n}\" })"
+      ],
       "description": "Switch to a workspace"
     },
     {
       "id": "workspace.next",
-      "phrases": ["next workspace", "workspace next"],
-      "run": ["hyprctl", "dispatch", "workspace", "e+1"],
+      "phrases": [
+        "next workspace",
+        "workspace next"
+      ],
+      "run": [
+        "hyprctl",
+        "dispatch",
+        "hl.dsp.focus({ workspace = \"e+1\" })"
+      ],
       "description": "Next workspace"
     },
     {
       "id": "workspace.previous",
-      "phrases": ["previous workspace", "last workspace", "workspace back"],
-      "run": ["hyprctl", "dispatch", "workspace", "e-1"],
+      "phrases": [
+        "previous workspace",
+        "last workspace",
+        "workspace back"
+      ],
+      "run": [
+        "hyprctl",
+        "dispatch",
+        "hl.dsp.focus({ workspace = \"e-1\" })"
+      ],
       "description": "Previous workspace"
     },
     {
       "id": "window.close",
-      "phrases": ["close window", "close this window", "close this"],
-      "run": ["hyprctl", "dispatch", "killactive"],
+      "phrases": [
+        "close window",
+        "close this window",
+        "close this"
+      ],
+      "run": [
+        "hyprctl",
+        "dispatch",
+        "hl.dsp.window.close()"
+      ],
       "severity": "destructive",
       "description": "Close the focused window"
     },
     {
       "id": "window.fullscreen",
-      "phrases": ["fullscreen", "full screen", "toggle fullscreen"],
-      "run": ["hyprctl", "dispatch", "fullscreen", "1"],
+      "phrases": [
+        "fullscreen",
+        "full screen",
+        "toggle fullscreen"
+      ],
+      "run": [
+        "hyprctl",
+        "dispatch",
+        "hl.dsp.window.fullscreen({ mode = \"fullscreen\" })"
+      ],
       "description": "Toggle fullscreen"
     },
     {
       "id": "system.lock",
-      "phrases": ["lock screen", "lock the screen", "lock"],
-      "run": ["omarchy", "system", "lock"],
+      "phrases": [
+        "lock screen",
+        "lock the screen",
+        "lock"
+      ],
+      "run": [
+        "omarchy",
+        "system",
+        "lock"
+      ],
       "description": "Lock the screen"
     },
     {
       "id": "audio.volume",
-      "phrases": ["volume {n}", "set volume {n}", "volume to {n}"],
-      "slots": { "n": { "type": "number", "min": 0, "max": 100 } },
-      "run": ["wpctl", "set-volume", "@DEFAULT_AUDIO_SINK@", "{n}%"],
+      "phrases": [
+        "volume {n}",
+        "set volume {n}",
+        "volume to {n}"
+      ],
+      "slots": {
+        "n": {
+          "type": "number",
+          "min": 0,
+          "max": 100
+        }
+      },
+      "run": [
+        "wpctl",
+        "set-volume",
+        "@DEFAULT_AUDIO_SINK@",
+        "{n}%"
+      ],
       "description": "Set output volume"
     },
     {
       "id": "audio.mute",
-      "phrases": ["mute", "mute audio", "mute sound"],
-      "run": ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "1"],
+      "phrases": [
+        "mute",
+        "mute audio",
+        "mute sound"
+      ],
+      "run": [
+        "wpctl",
+        "set-mute",
+        "@DEFAULT_AUDIO_SINK@",
+        "1"
+      ],
       "description": "Mute output"
     },
     {
       "id": "audio.unmute",
-      "phrases": ["unmute", "unmute audio", "unmute sound"],
-      "run": ["wpctl", "set-mute", "@DEFAULT_AUDIO_SINK@", "0"],
+      "phrases": [
+        "unmute",
+        "unmute audio",
+        "unmute sound"
+      ],
+      "run": [
+        "wpctl",
+        "set-mute",
+        "@DEFAULT_AUDIO_SINK@",
+        "0"
+      ],
       "description": "Unmute output"
     },
     {
       "id": "capture.screenshot",
-      "phrases": ["screenshot", "take a screenshot", "capture screen"],
-      "run": ["omarchy", "capture", "screenshot"],
+      "phrases": [
+        "screenshot",
+        "take a screenshot",
+        "capture screen"
+      ],
+      "run": [
+        "omarchy",
+        "capture",
+        "screenshot"
+      ],
       "description": "Take a screenshot"
     },
     {
       "id": "theme.set",
-      "phrases": ["theme {name}", "set theme {name}", "switch theme to {name}"],
-      "slots": { "name": { "type": "text" } },
-      "run": ["omarchy", "theme", "set", "{name}"],
+      "phrases": [
+        "theme {name}",
+        "set theme {name}",
+        "switch theme to {name}"
+      ],
+      "slots": {
+        "name": {
+          "type": "text"
+        }
+      },
+      "run": [
+        "omarchy",
+        "theme",
+        "set",
+        "{name}"
+      ],
       "description": "Switch theme"
     },
     {
       "id": "app.open",
-      "phrases": ["open {app}", "launch {app}", "start {app}"],
+      "phrases": [
+        "open {app}",
+        "launch {app}",
+        "start {app}"
+      ],
       "slots": {
         "app": {
           "type": "enum",
-          "options": ["browser", "terminal", "editor", "files", "music", "settings"]
+          "options": [
+            "browser",
+            "terminal",
+            "editor",
+            "files",
+            "music",
+            "settings"
+          ]
         }
       },
-      "run": ["omarchy", "launch", "{app}"],
+      "run": [
+        "omarchy",
+        "launch",
+        "{app}"
+      ],
       "description": "Launch an app by role"
     }
   ]

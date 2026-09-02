@@ -109,14 +109,24 @@ if (needsApproval) {
 
 const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" })
 const code = await proc.exited
+const stdout = (await new Response(proc.stdout).text()).trim()
+const stderr = (await new Response(proc.stderr).text()).trim()
 
-if (code === 0) {
+// Exit code alone is not enough. hyprctl in particular prints a Lua parse
+// error and still exits 0 in some paths, which would report a command as
+// having succeeded while nothing happened -- the exact way `hyprctl dispatch
+// workspace 10` failed silently. Treat an "error:" in either stream as a
+// failure regardless of what the process claimed.
+const complained = /(^|\n)\s*error:/i.test(stdout) || /(^|\n)\s*error:/i.test(stderr)
+const failed = code !== 0 || complained
+
+if (!failed) {
   audit(`${intent.id} cmd:${argv.join(" ")} -> ok`)
   await finish({ state: "done", mode: "command", transcript: phrase,
                  matched: intent.description || intent.id })
 } else {
-  const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? ""
-  audit(`${intent.id} cmd:${argv.join(" ")} -> failed (${code}) ${err}`)
+  const detail = (stderr || stdout).split("\n")[0]?.replace(/^\s*error:\s*/i, "") ?? ""
+  audit(`${intent.id} cmd:${argv.join(" ")} -> failed (${code}${complained ? ", reported an error" : ""}) ${detail}`)
   await finish({ state: "error", mode: "command",
-                 errorText: err || `Command failed (${code})` }, 2600)
+                 errorText: detail || `Command failed (${code})` }, 2800)
 }
