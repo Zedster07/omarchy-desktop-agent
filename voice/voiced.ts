@@ -298,7 +298,7 @@ async function runCommand(phrase: string) {
   const threshold = Number(await settingStr("command.threshold", "62")) / 100
   let match = resolve(phrase, intents, isFinite(threshold) ? threshold : 0.62)
   let aiRouted: { provider: string } | null = null
-  let aiProposal: any = null
+  let aiProposal: { steps: string[][]; explanation: string; severity: string; provider: string } | null = null
 
   const assist = await settingStr("ai.assist", "route")
   const preference = await settingStr("ai.provider", "auto")
@@ -349,14 +349,16 @@ async function runCommand(phrase: string) {
   try { target = await Bun.file(`${STATE}/command-target.json`).json() } catch {}
 
   const intent = match ? match.intent : {
-    id: "ai.proposed", phrases: [], run: aiProposal.argv,
+    id: "ai.proposed", phrases: [], run: aiProposal.steps[0],
     severity: aiProposal.severity === "destructive" ? "destructive" : "normal",
     description: aiProposal.explanation || "Command proposed by AI",
     source: aiProposal.provider,
   }
 
   Bun.spawn(["bun", `${PLUGIN_DIR}voice/execute.ts`, JSON.stringify({
-    phrase, intent, argv: match ? match.argv : aiProposal.argv,
+    phrase, intent,
+    argv: match ? match.argv : aiProposal.steps[0],
+    steps: match ? null : aiProposal.steps,
     score: match ? match.score : 0,
     aiProposed: aiProposal ? { provider: aiProposal.provider, explanation: aiProposal.explanation } : null,
     aiRouted,

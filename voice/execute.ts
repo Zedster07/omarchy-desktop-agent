@@ -20,12 +20,18 @@ interface Payload {
   target: Target | null
   /** Set when the command came from a model rather than the registry. */
   aiProposed: { provider: string; explanation: string } | null
+  /** Extra commands to run after argv, in order. AI plans only. */
+  steps: string[][] | null
   /** Set when a model CHOSE a registered intent the matcher did not find. */
   aiRouted: { provider: string } | null
 }
 
 const payload: Payload = JSON.parse(process.argv[2] ?? "{}")
 const { intent, phrase, target, aiProposed, aiRouted } = payload
+// One code path for both shapes: a registry command is a plan of length one.
+const plan: string[][] = payload.steps && payload.steps.length
+  ? payload.steps
+  : [payload.argv]
 let argv = payload.argv
 
 function audit(line: string) {
@@ -97,13 +103,16 @@ if (needsWindow) {
                    errorText: "That window is gone — refusing rather than guessing" }, 3000)
   }
   argv = argv.map(a => a.replaceAll("{window}", target!.address))
+  for (let i = 0; i < plan.length; i++) {
+    plan[i] = plan[i].map(a => a.replaceAll("{window}", target!.address))
+  }
 }
 
 // Matches only a real placeholder -- {window}, {n}, {app} -- and deliberately
 // NOT Lua table syntax like `{ window = "address:0x..." }`, which is what a
 // naive check for "{" flagged, refusing every window-scoped command.
 const LEFTOVER = /\{[A-Za-z_][A-Za-z0-9_]*\}/
-if (argv.some(a => LEFTOVER.test(a))) {
+if (plan.some(c => c.some(a => LEFTOVER.test(a)))) {
   audit(`${intent.id} -> refused, unsubstituted placeholder in ${argv.join(" ")}`)
   await finish({ state: "error", mode: "command", errorText: "Command was incomplete" }, 2600)
 }
@@ -137,6 +146,9 @@ if (needsApproval) {
     capability: "voice-command",
     target: needsWindow && target
       ? `${target.cls}${target.title ? " — " + target.title : ""}`
+      // With a multi-step plan the steps are listed individually below, so
+      // repeating a placeholder argv here says nothing.
+      : plan.length > 1 ? `${plan.length} commands`
       : argv.join(" "),
     principal: "voice",
     severity: destructive ? "destructive" : "normal",
@@ -152,7 +164,9 @@ if (needsApproval) {
         `nothing like it is registered, so it has not been reviewed by anyone but you`,
       ] : []),
       ...(needsWindow && target ? [`this acts on the window you were looking at, not the focused one`] : []),
-      ...(needsWindow || fromModel ? [`command: ${argv.join(" ")}`] : []),
+      ...(plan.length > 1
+        ? plan.map((c, i) => `step ${i + 1} of ${plan.length}: ${c.join(" ")}`)
+        : (needsWindow || fromModel ? [`command: ${argv.join(" ")}`] : [])),
       destructive ? "this intent is marked destructive, so it always asks" : `confirmation setting is "${confirm}"`,
     ],
   }))
@@ -178,26 +192,45 @@ if (needsApproval) {
   }
 }
 
-const proc = Bun.spawn(argv, { stdout: "pipe", stderr: "pipe" })
-const code = await proc.exited
-const stdout = (await new Response(proc.stdout).text()).trim()
-const stderr = (await new Response(proc.stderr).text()).trim()
+// Run the plan in order, stopping at the first failure.
+//
+// Continuing past a failed step is how a half-finished plan does something
+// nobody asked for: step 2 assumes step 1 worked. The report names the step
+// that broke, because "command failed" on a five-step plan is not a report.
+let failedAt = -1
+let detail = ""
 
-// Exit code alone is not enough. hyprctl in particular prints a Lua parse
-// error and still exits 0 in some paths, which would report a command as
-// having succeeded while nothing happened -- the exact way `hyprctl dispatch
-// workspace 10` failed silently. Treat an "error:" in either stream as a
-// failure regardless of what the process claimed.
-const complained = /(^|\n)\s*error:/i.test(stdout) || /(^|\n)\s*error:/i.test(stderr)
-const failed = code !== 0 || complained
+for (let i = 0; i < plan.length; i++) {
+  const step = plan[i]
+  const proc = Bun.spawn(step, { stdout: "pipe", stderr: "pipe" })
+  const code = await proc.exited
+  const out = (await new Response(proc.stdout).text()).trim()
+  const err = (await new Response(proc.stderr).text()).trim()
 
-if (!failed) {
-  audit(`${intent.id}${aiProposed ? `(plan:${aiProposed.provider})` : aiRouted ? `(route:${aiRouted.provider})` : ""} cmd:${argv.join(" ")} -> ok`)
+  // Exit code alone is not enough: hyprctl prints a Lua parse error and still
+  // exits 0, which would report a command as having succeeded while nothing
+  // happened.
+  const complained = /(^|\n)\s*error:/i.test(out) || /(^|\n)\s*error:/i.test(err)
+  if (code !== 0 || complained) {
+    failedAt = i
+    detail = (err || out).split("\n")[0]?.replace(/^\s*error:\s*/i, "") ?? ""
+    break
+  }
+
+  // A step that launches something needs a moment before the next one assumes
+  // it is there. Only between steps, never after the last.
+  if (i < plan.length - 1) await Bun.sleep(400)
+}
+
+const label = `${intent.id}${aiProposed ? `(plan:${aiProposed.provider})` : aiRouted ? `(route:${aiRouted.provider})` : ""}`
+
+if (failedAt < 0) {
+  audit(`${label} cmd:${plan.map(c => c.join(" ")).join(" && ")} -> ok`)
   await finish({ state: "done", mode: "command", transcript: phrase,
                  matched: intent.description || intent.id })
 } else {
-  const detail = (stderr || stdout).split("\n")[0]?.replace(/^\s*error:\s*/i, "") ?? ""
-  audit(`${intent.id} cmd:${argv.join(" ")} -> failed (${code}${complained ? ", reported an error" : ""}) ${detail}`)
+  const which = plan.length > 1 ? ` (step ${failedAt + 1} of ${plan.length})` : ""
+  audit(`${label} cmd:${plan[failedAt].join(" ")} -> failed${which} ${detail}`)
   await finish({ state: "error", mode: "command",
-                 errorText: detail || `Command failed (${code})` }, 2800)
+                 errorText: (detail || "Command failed") + which }, 2800)
 }

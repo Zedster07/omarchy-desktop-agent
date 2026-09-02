@@ -20,11 +20,22 @@ import { checkProposedCommand } from "./safety.ts"
 
 export interface RouteResult { id: string; slots: Record<string, string> }
 export interface PlanResult {
-  argv: string[]
+  /**
+   * The commands to run, in order. Usually one.
+   *
+   * A single argv could not express "play this song": the best one-shot answer
+   * is a search URL, which opens a page and stops -- the request half-done and
+   * looking like a failure. Some intents genuinely take a sequence, so the
+   * plan is a list and the approval prompt shows all of it.
+   */
+  steps: string[][]
   explanation: string
   severity: "normal" | "destructive"
   provider: string
 }
+
+/** How many commands one spoken sentence may turn into. */
+const MAX_STEPS = 5
 
 // ------------------------------------------------------------------ tier 2
 
@@ -84,7 +95,7 @@ export async function plan(
     .map(c => `${c.route}${c.args ? " " + c.args : ""} — ${c.summary}`)
     .join("\n")
 
-  const prompt = `You turn a spoken request into ONE command to run on an Omarchy Linux desktop (Arch Linux, Hyprland, Wayland).
+  const prompt = `You turn a spoken request into the commands to run on an Omarchy Linux desktop (Arch Linux, Hyprland, Wayland).
 
 Omarchy CLI routes available:
 ${catalogue}
@@ -95,38 +106,56 @@ Apps that can be opened by name (use: uwsm-app -- "<Name>.desktop"):
 ${installedApps().join(", ")}
 
 Rules:
-- The command is executed directly as an argv array. There is NO shell, so pipes, redirects, globs, $(...) and ; do not work. Do not use them.
+- Commands are executed directly as argv arrays. There is NO shell, so pipes, redirects, globs, $(...) and ; do not work. Do not use them.
 - Never use sudo, a shell (sh/bash), a package manager, or anything that deletes, moves or overwrites files.
-- Prefer an "omarchy ..." route when one fits. Otherwise use one of the installed programs.
-- To open a web page or play something online, use xdg-open with a full URL.
-- To open an installed app, use uwsm-app with its Desktop Entry ID. Do NOT use
-  "omarchy launch <app>": that route only exists for a fixed handful of names,
-  and inventing one produces a command-not-found.
+- Prefer an "omarchy ..." route when one fits. To open an installed app use uwsm-app with its Desktop Entry ID. Do NOT use "omarchy launch <app>": that route exists only for a fixed handful of names.
+- FINISH THE REQUEST. Do not stop at a step that merely gets close to it. Opening a search page for something the user asked you to play is not playing it.
+- Use at most ${MAX_STEPS} steps, and only more than one when a single command genuinely cannot do the job.
+
+Worked examples of finishing rather than approaching:
+- "play <song> on youtube" -> [["mpv", "--ytdl-format=bestaudio", "ytdl://ytsearch1:<song>"]]
+  (ytsearch1 resolves and plays the first hit; a youtube.com/results URL only opens a search)
+- "watch <video> on youtube" -> [["mpv", "ytdl://ytsearch1:<video>"]]
+- "open <app>" -> [["uwsm-app", "--", "<Name>.desktop"]]
+- "look up <thing>" -> [["xdg-open", "https://duckduckgo.com/?q=<thing>"]]
 
 Request: "${phrase}"
 
 Reply with JSON only, no prose and no code fence:
-{"argv": ["program", "arg1", "arg2"], "explanation": "<one short sentence a user will read before approving>", "severity": "normal"}
-Use "severity": "destructive" if it closes, deletes, or interrupts something.
-If you cannot do it safely with one command, reply {"argv": null, "reason": "<why>"}.`
+{"steps": [["program","arg"], ["program","arg"]], "explanation": "<one short sentence a user will read before approving>", "severity": "normal"}
+Use "severity": "destructive" if anything in it closes, deletes, or interrupts something.
+If you cannot do it safely, reply {"steps": null, "reason": "<why>"}.`
 
   const raw = await ask(provider, prompt)
   const json = extractJson(raw)
-  if (!json || !Array.isArray(json.argv) || json.argv.length === 0) {
-    return { result: null, provider: provider.id }
-  }
 
-  const argv = json.argv.map((a: unknown) => String(a))
-  const verdict = checkProposedCommand(argv)
-  if (!verdict.ok) {
-    // Refused before a human is asked. An approval prompt for something the
-    // rules already forbid is not a safeguard, it is a trap with a button.
-    return { result: null, provider: provider.id, refusal: verdict.reason }
+  // Accept a bare `argv` too: models fall back to the older single-command
+  // shape often enough that rejecting it would look like a random failure.
+  const rawSteps: unknown[] =
+    Array.isArray(json?.steps) ? json.steps
+    : Array.isArray(json?.argv) ? [json.argv]
+    : []
+  if (rawSteps.length === 0) return { result: null, provider: provider.id }
+
+  const steps: string[][] = []
+  for (const s of rawSteps.slice(0, MAX_STEPS)) {
+    if (!Array.isArray(s) || s.length === 0) continue
+    steps.push(s.map((a: unknown) => String(a)))
+  }
+  if (steps.length === 0) return { result: null, provider: provider.id }
+
+  // EVERY step is checked, not just the first. A plan is only as safe as its
+  // worst command, and a denied one must stop the whole thing before a person
+  // is asked -- an approval prompt for something the rules already forbid is
+  // not a safeguard, it is a trap with a button.
+  for (const step of steps) {
+    const verdict = checkProposedCommand(step)
+    if (!verdict.ok) return { result: null, provider: provider.id, refusal: verdict.reason }
   }
 
   return {
     result: {
-      argv,
+      steps,
       explanation: String(json.explanation ?? "").slice(0, 200),
       severity: json.severity === "destructive" ? "destructive" : "normal",
       provider: provider.id,

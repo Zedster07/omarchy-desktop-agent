@@ -29,6 +29,10 @@ Item {
 
   readonly property bool active: request !== null
   readonly property bool destructive: request && String(request.severity || "") === "destructive"
+  // "Always" means "stop asking about this scope". An AI plan is written fresh
+  // for one sentence and will never recur verbatim, so the button would only
+  // ever be a way to lower the guard on future, different plans.
+  readonly property bool oneOff: request && String(request.tool || "").indexOf("AI suggests") === 0
   readonly property string principal: request ? String(request.principal || "claude") : ""
 
   readonly property color tone: destructive ? Theme.danger : Theme.authAccent
@@ -304,7 +308,7 @@ Item {
           // for to make a prompt stop, so it should take the most intent.
           Button {
             text: "Always  A"
-            visible: !root.destructive
+            visible: !root.destructive && !root.oneOff
             foreground: Theme.authTextSecondary
             accent: root.tone
             focusable: true
@@ -318,7 +322,9 @@ Item {
           width: parent.width
           text: root.destructive
             ? "Destructive actions are never auto-approved, lease or no lease."
-            : "\"Always\" lasts until the server restarts. Edit the policy to make it permanent."
+            : root.oneOff
+              ? "Written for this sentence alone, so there is nothing to always-allow."
+              : "\"Always\" lasts until the server restarts. Edit the policy to make it permanent."
           color: Theme.authTextTertiary
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
@@ -334,7 +340,7 @@ Item {
       Keys.onPressed: function(event) {
         if (event.key === Qt.Key_Escape) { root.answer("deny"); event.accepted = true }
         else if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.answer("allow"); event.accepted = true }
-        else if (event.key === Qt.Key_A && !root.destructive) { root.answer("always"); event.accepted = true }
+        else if (event.key === Qt.Key_A && !root.destructive && !root.oneOff) { root.answer("always"); event.accepted = true }
       }
     }
   }
