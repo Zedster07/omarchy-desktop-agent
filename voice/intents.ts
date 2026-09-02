@@ -181,8 +181,19 @@ export function resolve(phrase: string, intents: Intent[], threshold = 0.62): Ma
       const m = matchTemplate(template, spoken, intent.slots)
       if (!m) continue
       if (best && m.score <= best.score) continue
+      // Substitute ONLY placeholders that this match actually bound. Anything
+      // else is left standing for a later stage to fill -- {window} is filled
+      // by execute.ts from the window captured at key-down, and is not a
+      // spoken slot.
+      //
+      // Blanking unknown placeholders instead (`m.slots[k] ?? ""`) is what
+      // turned `address:{window}` into `address:` and dispatched a window
+      // close with an empty selector. It also defeated the guard downstream,
+      // which was watching for a SURVIVING placeholder that had already been
+      // silently erased.
       const argv = intent.run.map(part =>
-        part.replace(/\{(\w+)\}/g, (_, k) => m.slots[k] ?? ""))
+        part.replace(/\{(\w+)\}/g, (whole, k) =>
+          Object.prototype.hasOwnProperty.call(m.slots, k) ? m.slots[k] : whole))
       best = { intent, slots: m.slots, score: m.score, argv }
     }
   }
