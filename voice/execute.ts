@@ -17,10 +17,14 @@ interface Target { address: string; cls: string; title: string }
 interface Payload {
   phrase: string; intent: Intent; argv: string[]; score: number
   target: Target | null
+  /** Set when the command came from a model rather than the registry. */
+  aiProposed: { provider: string; explanation: string } | null
+  /** Set when a model CHOSE a registered intent the matcher did not find. */
+  aiRouted: { provider: string } | null
 }
 
 const payload: Payload = JSON.parse(process.argv[2] ?? "{}")
-const { intent, phrase, target } = payload
+const { intent, phrase, target, aiProposed, aiRouted } = payload
 let argv = payload.argv
 
 function audit(line: string) {
@@ -119,14 +123,32 @@ if (argv.some(a => LEFTOVER.test(a))) {
   await finish({ state: "error", mode: "command", errorText: "Command was incomplete" }, 2600)
 }
 
+// Anything a MODEL decided is always confirmed by a person, whatever the
+// confirmation setting says. Two different failures make this non-negotiable:
+//
+//   * a planned command is invented text, and
+//   * a routed intent is a small model being asked "which of these twelve?" --
+//     a question such models answer badly, because saying "none" is the one
+//     option they are worst at. Asked to route "play Despacito on YouTube" one
+//     picked audio.mute, which was not destructive, so under a
+//     "destructive-only" setting it muted the speakers with nobody consulted.
+//
+// A deterministic match is a phrase someone registered on purpose and still
+// runs immediately. A model's opinion costs one keystroke.
 const destructive = intent.severity === "destructive"
 const confirm = await setting("commandConfirm", "destructive-only")
-const needsApproval =
-  confirm === "always" || (confirm === "destructive-only" && destructive)
+const fromModel = aiProposed !== null || aiRouted !== null
+const needsApproval = fromModel
+  || confirm === "always"
+  || (confirm === "destructive-only" && destructive)
 
 if (needsApproval) {
   const id = await ipc("request", JSON.stringify({
-    tool: `voice: ${intent.description || intent.id}`,
+    tool: aiProposed
+      ? `AI suggests: ${aiProposed.explanation || argv.join(" ")}`
+      : aiRouted
+        ? `AI thinks you meant: ${intent.description || intent.id}`
+        : `voice: ${intent.description || intent.id}`,
     capability: "voice-command",
     target: needsWindow && target
       ? `${target.cls}${target.title ? " — " + target.title : ""}`
@@ -136,8 +158,16 @@ if (needsApproval) {
     reasons: [
       `heard "${phrase}"`,
       `matched intent ${intent.id}${intent.source && intent.source !== "builtin" ? ` from ${intent.source}` : ""}`,
+      ...(aiRouted ? [
+        `no registered phrase matched "${phrase}"`,
+        `${aiRouted.provider} picked this command from the list — it was not recognised outright`,
+      ] : []),
+      ...(aiProposed ? [
+        `this command was written by ${aiProposed.provider}, not taken from the command list`,
+        `nothing like it is registered, so it has not been reviewed by anyone but you`,
+      ] : []),
       ...(needsWindow && target ? [`this acts on the window you were looking at, not the focused one`] : []),
-      ...(needsWindow ? [`command: ${argv.join(" ")}`] : []),
+      ...(needsWindow || fromModel ? [`command: ${argv.join(" ")}`] : []),
       destructive ? "this intent is marked destructive, so it always asks" : `confirmation setting is "${confirm}"`,
     ],
   }))
@@ -177,7 +207,7 @@ const complained = /(^|\n)\s*error:/i.test(stdout) || /(^|\n)\s*error:/i.test(st
 const failed = code !== 0 || complained
 
 if (!failed) {
-  audit(`${intent.id} cmd:${argv.join(" ")} -> ok`)
+  audit(`${intent.id}${aiProposed ? `(plan:${aiProposed.provider})` : aiRouted ? `(route:${aiRouted.provider})` : ""} cmd:${argv.join(" ")} -> ok`)
   await finish({ state: "done", mode: "command", transcript: phrase,
                  matched: intent.description || intent.id })
 } else {

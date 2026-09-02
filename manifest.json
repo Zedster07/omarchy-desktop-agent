@@ -30,7 +30,10 @@
       "recapEnabled": true,
       "recapIdleSec": 20,
       "yoloMaxMinutes": 60,
-      "matchThreshold": 62
+      "matchThreshold": 62,
+      "aiAssist": "route",
+      "aiProvider": "auto",
+      "aiModel": "llama3.2:3b"
     },
     "schema": [
       {
@@ -68,6 +71,40 @@
         "step": 5,
         "defaultValue": 62,
         "description": "How close a phrase must be to a registered command before it runs. Higher means more phrases are rejected as unrecognised, which is the safe direction: an unmatched command says so, a wrongly matched one just happens."
+      },
+      {
+        "key": "aiAssist",
+        "type": "enum",
+        "label": "AI assistance",
+        "options": [
+          "off",
+          "route",
+          "route+plan"
+        ],
+        "defaultValue": "route",
+        "description": "off: only phrases in the command list work. route: when nothing matches, a LOCAL model picks from the same list \u2014 it can recognise a new wording but cannot invent an action, and nothing leaves the machine. route+plan: also lets your AI CLI write a new command for requests the list does not cover, such as playing something on YouTube. Planned commands are checked against a denylist and always need your approval."
+      },
+      {
+        "key": "aiProvider",
+        "type": "enum",
+        "label": "AI provider",
+        "options": [
+          "auto",
+          "ollama",
+          "claude",
+          "opencode",
+          "gemini",
+          "codex"
+        ],
+        "defaultValue": "auto",
+        "description": "auto uses a local Ollama model for recognising wordings and your installed CLI agent for planning new commands. Only providers found on this machine are used."
+      },
+      {
+        "key": "aiModel",
+        "type": "string",
+        "label": "Local model",
+        "defaultValue": "llama3.2:3b",
+        "description": "Ollama model used for recognising wordings. Small and fast matters more than clever here \u2014 it is choosing from a list of about a dozen."
       },
       {
         "key": "agentEnabled",
