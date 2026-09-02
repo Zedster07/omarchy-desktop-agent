@@ -1,10 +1,18 @@
 #!/usr/bin/env bun
 //
-// Waits for voxtype to drop a command transcript, then turns it into an action.
+// Follows one command-mode utterance from key-down to action.
 //
-// Started by desktop-agent-arm at key-down and detached, because the interesting
-// part happens after key-up: voxtype records for as long as the key is held and
-// then takes a few seconds to transcribe. Nothing here is on the dictation path.
+// Driven by `voxtype status --follow`, which streams idle -> recording ->
+// transcribing -> idle as JSON. The first version instead polled for the
+// result file with a 180s deadline and nothing else, which meant:
+//
+//   * the HUD said "listening" for the entire transcription, and
+//   * a clip too short to transcribe wrote no file at all, so the watcher sat
+//     there for three minutes with the core still spinning on screen.
+//
+// Following the daemon's own state removes both: the moment it goes back to
+// idle the utterance is over, and if no transcript landed by then there never
+// will be one.
 
 import { resolve } from "./intents.ts"
 import { loadIntents } from "./registry.ts"
@@ -17,10 +25,9 @@ const PLUGIN_DIR = new URL("..", import.meta.url).pathname
 const SHELL_IPC = ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call",
                    "io.github.zedster07.desktop-agent"]
 
-// Long enough for a held key plus transcription on a slow machine, short
-// enough that a forgotten recording does not leave a watcher running all day.
-const TIMEOUT_MS = 180_000
-const POLL_MS = 150
+// A backstop only. The status stream is the real clock; this catches the case
+// where voxtype dies mid-utterance and stops streaming altogether.
+const HARD_TIMEOUT_MS = 120_000
 
 function hud(patch: Record<string, unknown>) {
   Bun.spawn([...SHELL_IPC, "voice", JSON.stringify(patch)],
@@ -35,21 +42,118 @@ async function finish(patch: Record<string, unknown>, holdMs = 2000): Promise<ne
   process.exit(0)
 }
 
-hud({ state: "listening", mode: "command", transcript: "", errorText: "" })
+// ---------------------------------------------------------------- levels
+//
+// voxtype owns the microphone for transcription and does not publish levels,
+// so the waveform needs its own source. PipeWire allows a second reader, and
+// this one exists purely to compute an RMS per chunk: nothing is buffered,
+// nothing is written to disk, and it is killed the instant recording stops.
+//
+// Without it the radial waveform draws 72 bars at their floor value, which
+// does not read as "quiet" -- it reads as broken.
+let meter: ReturnType<typeof Bun.spawn> | null = null
 
-const deadline = Date.now() + TIMEOUT_MS
-let phrase = ""
+function startMeter() {
+  if (meter) return
+  try {
+    meter = Bun.spawn(
+      ["pw-record", "--raw", "--rate", "16000", "--channels", "1", "--format", "s16", "-"],
+      { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+  } catch { meter = null; return }
 
-while (Date.now() < deadline) {
-  if (existsSync(RESULT)) {
-    // Give voxtype a moment to finish the write rather than reading a
-    // half-flushed file.
-    await Bun.sleep(60)
-    try { phrase = (await Bun.file(RESULT).text()).trim() } catch { phrase = "" }
-    try { unlinkSync(RESULT) } catch {}
-    break
+  const levels: number[] = []
+  let sincePush = 0
+  ;(async () => {
+    const stream = meter?.stdout
+    if (!stream || typeof stream === "number") return
+    for await (const raw of stream as ReadableStream<Uint8Array>) {
+      if (!meter) break
+      const buf = Buffer.from(raw)
+      const n = Math.floor(buf.length / 2)
+      if (n === 0) continue
+      let sum = 0
+      for (let i = 0; i < n; i++) {
+        const s = buf.readInt16LE(i * 2) / 32768
+        sum += s * s
+      }
+      // Curved so conversational speech uses most of the range; a linear RMS
+      // bar barely leaves the floor at normal talking volume.
+      const lvl = Math.min(1, Math.pow(Math.sqrt(sum / n), 0.65) * 2.2)
+      levels.push(lvl)
+      if (levels.length > 160) levels.splice(0, levels.length - 160)
+      if (++sincePush >= 2) {
+        sincePush = 0
+        hud({ levels: levels.slice(-72) })
+      }
+    }
+  })()
+}
+
+function stopMeter() {
+  if (!meter) return
+  try { meter.kill() } catch {}
+  meter = null
+}
+
+// ------------------------------------------------------------------ main
+
+hud({ state: "listening", mode: "command", transcript: "", errorText: "", levels: [] })
+
+const follow = Bun.spawn(["voxtype", "status", "--follow", "--format", "json"],
+                         { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+
+const hardStop = setTimeout(() => {
+  stopMeter()
+  try { follow.kill() } catch {}
+}, HARD_TIMEOUT_MS)
+
+let sawActivity = false
+let phase = "idle"
+
+const decoder = new TextDecoder()
+let carry = ""
+
+outer:
+for await (const chunk of follow.stdout as ReadableStream<Uint8Array>) {
+  carry += decoder.decode(chunk, { stream: true })
+  const lines = carry.split("\n")
+  carry = lines.pop() ?? ""
+
+  for (const line of lines) {
+    const t = line.trim()
+    if (t === "") continue
+    let state = ""
+    try { state = String(JSON.parse(t).alt ?? "") } catch { continue }
+    if (state === phase) continue
+    phase = state
+
+    if (state === "recording") {
+      sawActivity = true
+      startMeter()
+      hud({ state: "listening", mode: "command" })
+    } else if (state === "transcribing") {
+      sawActivity = true
+      stopMeter()
+      hud({ state: "transcribing", mode: "command", levels: [] })
+    } else if (state === "idle" && sawActivity) {
+      // The utterance is over. Anything voxtype was going to write is written.
+      stopMeter()
+      break outer
+    }
   }
-  await Bun.sleep(POLL_MS)
+}
+
+clearTimeout(hardStop)
+stopMeter()
+try { follow.kill() } catch {}
+
+// Small grace: the file write and the status flip are not ordered.
+for (let i = 0; i < 12 && !existsSync(RESULT); i++) await Bun.sleep(100)
+
+let phrase = ""
+if (existsSync(RESULT)) {
+  try { phrase = (await Bun.file(RESULT).text()).trim() } catch { phrase = "" }
+  try { unlinkSync(RESULT) } catch {}
 }
 
 if (phrase === "") {
@@ -77,24 +181,18 @@ async function setting(key: string, fallback: string): Promise<string> {
 
 const intents = await loadIntents()
 
-// ---- tier 1: the deterministic matcher. Instant, and the only tier that runs
-// for a phrase someone actually declared.
+// tier 1: the deterministic matcher
 let match = resolve(phrase, intents)
 let aiProposal: { argv: string[]; explanation: string; severity: string; provider: string } | null = null
-// Set when a MODEL chose this intent rather than the matcher. It is the
-// difference between "you said a phrase someone registered" and "a 3B model
-// thought you might have meant this", and it is why the second one is never
-// executed without a person seeing it first.
 let aiRouted: { provider: string } | null = null
 
 const assist = await setting("aiAssist", "route")
 const preference = await setting("aiProvider", "auto")
 
 if (!match && assist !== "off") {
-  // ---- tier 2: let a model pick from the SAME list. It cannot invent an
-  // action here, only recognise one, so the blast radius is the registry.
-  hud({ state: "transcribing", mode: "command", transcript: phrase,
-        errorText: "" , matched: "thinking…" })
+  // tier 2: a model picks from the SAME list; it can recognise a wording but
+  // cannot invent an action.
+  hud({ state: "transcribing", mode: "command", transcript: phrase, matched: "thinking…" })
   const routed = await route(phrase, intents, preference)
   if (routed.result) {
     const target = intents.find(i => i.id === routed.result!.id)
@@ -110,9 +208,8 @@ if (!match && assist !== "off") {
 }
 
 if (!match && assist === "route+plan") {
-  // ---- tier 3: a genuinely new command. This is the only place an action can
-  // originate from a model, so it is always approved by a human and is checked
-  // against the denylist before anyone is even asked.
+  // tier 3: a genuinely new command, always approved by a person and checked
+  // against the denylist before anyone is asked.
   const planned = await plan(phrase, preference)
   if (planned.refusal) {
     await finish({ state: "error", mode: "command", transcript: phrase,
@@ -122,15 +219,10 @@ if (!match && assist === "route+plan") {
 }
 
 if (!match && !aiProposal) {
-  // Never guessed at, and never typed. An unrecognised command silently
-  // becoming text in whatever window had focus is how "lock screen" ends up
-  // in a commit message.
   await finish({ state: "error", mode: "command", transcript: phrase,
                  errorText: "No command matched" }, 2400)
 }
 
-// The window that was focused when the phrase was spoken, captured at
-// key-down by desktop-agent-arm.
 let target: any = null
 try { target = await Bun.file(TARGET).json() } catch {}
 
@@ -157,5 +249,4 @@ Bun.spawn(["bun", `${PLUGIN_DIR}voice/execute.ts`, JSON.stringify({
   } : null,
 })], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
 
-// execute.ts owns the HUD from here.
 process.exit(0)
