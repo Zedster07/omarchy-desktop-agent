@@ -5,8 +5,12 @@
   "version": "3.0.0",
   "author": "Zedster07",
   "license": "MIT",
-  "description": "Voice control and agent control for your desktop, on a leash you own. Push-to-talk dictation that types into any window, spoken commands matched against a declared registry, and a default-deny policy with an approval overlay and an audit trail.",
-  "kinds": ["service", "panel", "bar-widget"],
+  "description": "Speak to your desktop and have it act, on a leash you own. Adds spoken commands on top of Omarchy's built-in Voxtype dictation: a phrase is matched against a declared intent registry, gated by a default-deny policy with an approval overlay and an audit trail. Other plugins can register their own voice commands.",
+  "kinds": [
+    "service",
+    "panel",
+    "bar-widget"
+  ],
   "entryPoints": {
     "service": "Service.qml",
     "panel": "Panel.qml",
@@ -14,18 +18,11 @@
   },
   "barWidget": {
     "displayName": "Desktop Agent",
-    "description": "Voice dictation, spoken commands, and policy-gated agent control with an approval overlay and kill switch.",
+    "description": "Spoken commands, an approval overlay, and policy-gated agent control.",
     "category": "System",
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "voiceEnabled": true,
-      "voiceEngine": "whisper.cpp",
-      "voiceModel": "base",
-      "voiceLanguage": "en",
-      "voiceInjection": "wtype",
-      "voicePreview": false,
-      "voiceVocabulary": "",
       "commandsEnabled": true,
       "commandConfirm": "destructive-only",
       "thirdPartyIntents": true,
@@ -33,82 +30,44 @@
       "recapEnabled": true,
       "recapIdleSec": 20,
       "yoloMaxMinutes": 60,
-      "modelDir": ""
+      "matchThreshold": 62
     },
     "schema": [
-      {
-        "key": "voiceEnabled",
-        "type": "boolean",
-        "label": "Voice input",
-        "description": "Enable push-to-talk dictation and spoken commands. Turning this off unloads the voice daemon entirely.",
-        "defaultValue": true
-      },
-      {
-        "key": "voiceEngine",
-        "type": "enum",
-        "label": "Speech engine",
-        "options": ["whisper.cpp", "moonshine", "parakeet"],
-        "defaultValue": "whisper.cpp",
-        "description": "whisper.cpp is the widest language coverage. moonshine is fastest for short push-to-talk phrases. parakeet is the most accurate in English. Only engines detected on this machine are offered at runtime."
-      },
-      {
-        "key": "voiceModel",
-        "type": "enum",
-        "label": "Model size",
-        "options": ["base", "small", "medium", "large-v3-turbo"],
-        "defaultValue": "base",
-        "description": "Larger is more accurate and much slower, and latency matters more than accuracy for dictation. base is ~1.2s on an 8-thread 2016 CPU; small was ~4.6s on the same machine. Run `desktop-agent benchmark` to measure yours before moving up."
-      },
-      {
-        "key": "voiceLanguage",
-        "type": "string",
-        "label": "Language code",
-        "defaultValue": "en",
-        "description": "Forced, never auto-detected. Auto-detection on short audio is a common cause of a phrase coming back translated instead of transcribed."
-      },
-      {
-        "key": "voiceInjection",
-        "type": "enum",
-        "label": "Text injection",
-        "options": ["wtype", "clipboard-paste"],
-        "defaultValue": "wtype",
-        "description": "wtype types directly via the Wayland virtual-keyboard protocol. clipboard-paste is the fallback for apps that ignore synthetic key events; it restores your previous clipboard afterwards."
-      },
-      {
-        "key": "voicePreview",
-        "type": "boolean",
-        "label": "Preview before inserting",
-        "description": "Show the transcript in the voice HUD and wait for Enter instead of typing it straight away. Off is faster; on is safer when dictating into something consequential.",
-        "defaultValue": false
-      },
-      {
-        "key": "voiceVocabulary",
-        "type": "string",
-        "label": "Custom vocabulary",
-        "defaultValue": "",
-        "description": "Comma-separated names, jargon, and project terms used to prime the decoder. Markedly improves accuracy on technical words the model would otherwise guess at."
-      },
       {
         "key": "commandsEnabled",
         "type": "boolean",
         "label": "Spoken commands",
-        "description": "Enable command mode, where a spoken phrase is matched against the intent registry and run through the policy instead of being typed as text.",
+        "description": "Match a spoken phrase against the intent registry and run it, instead of typing it. Dictation is unaffected either way \u2014 that is Voxtype's job and this never touches it.",
         "defaultValue": true
       },
       {
         "key": "commandConfirm",
         "type": "enum",
         "label": "Confirm spoken commands",
-        "options": ["never", "destructive-only", "always"],
+        "options": [
+          "never",
+          "destructive-only",
+          "always"
+        ],
         "defaultValue": "destructive-only",
-        "description": "Whether a matched command shows a confirmation in the HUD before it runs. This is layered on top of the policy, which can still force an approval regardless."
+        "description": "Whether a matched command raises the approval overlay before running. Intents marked destructive always ask, whatever this says."
       },
       {
         "key": "thirdPartyIntents",
         "type": "boolean",
         "label": "Let other plugins register commands",
-        "description": "Read voice-intents.json from other installed Omarchy plugins so their actions can be spoken. Each newly discovered plugin has to be approved once before its intents become live.",
+        "description": "Read voice-intents.json from other installed plugins so their actions can be spoken. Each plugin has to be approved once before its intents go live \u2014 installing a plugin must not silently extend what your microphone can do.",
         "defaultValue": true
+      },
+      {
+        "key": "matchThreshold",
+        "type": "integer",
+        "label": "Match strictness (%)",
+        "min": 40,
+        "max": 95,
+        "step": 5,
+        "defaultValue": 62,
+        "description": "How close a phrase must be to a registered command before it runs. Higher means more phrases are rejected as unrecognised, which is the safe direction: an unmatched command says so, a wrongly matched one just happens."
       },
       {
         "key": "agentEnabled",
@@ -143,13 +102,6 @@
         "step": 5,
         "defaultValue": 60,
         "description": "Hard ceiling on a full-access lease, re-checked on every action. A longer lease is truncated, not honoured."
-      },
-      {
-        "key": "modelDir",
-        "type": "path",
-        "label": "Model folder",
-        "defaultValue": "",
-        "description": "Where speech models are stored. Leave empty for ~/.local/share/desktop-agent/models."
       }
     ]
   }

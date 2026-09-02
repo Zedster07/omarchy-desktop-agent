@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Arms command mode and starts recording.
+#
+# Two steps, in this order, because the flag has to be on disk before voxtype
+# finishes transcribing and calls the hook. Recording takes at least as long as
+# a person speaking, so the ordering has enormous slack -- but the flag is also
+# time-limited and single-use, so a crash between the two cannot leave command
+# mode armed for the next thing you dictate.
+set -euo pipefail
+
+STATE="${XDG_STATE_HOME:-$HOME/.local/state}/desktop-agent"
+mkdir -p "$STATE"
+: > "$STATE/command-mode"
+
+if ! command -v voxtype >/dev/null 2>&1; then
+  notify-send -a "Desktop Agent" "Voice commands need voxtype" \
+    "Install it with: omarchy pkg add voxtype-bin" 2>/dev/null || true
+  rm -f "$STATE/command-mode"
+  exit 1
+fi
+
+exec voxtype record start

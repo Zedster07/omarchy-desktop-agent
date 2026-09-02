@@ -1,138 +1,124 @@
 # Desktop Agent
 
-Voice control and agent control for your desktop, on a leash you own.
+**Say what you want, and your desktop does it — on a leash you own.**
 
-Hold a key and talk: the words land in whatever window has focus. Hold a
-different key and talk: the phrase is matched against a declared list of
-actions and run — through a default-deny policy, with an approval prompt for
-anything the rules are unsure about and an audit line for everything that
-happens.
+Omarchy already turns your voice into text: Voxtype ships with the OS, bound to
+`F9`. This does the other half. Press `F10`, say *"workspace three"* or
+*"lock screen"*, and it **happens** — matched against a declared list of
+actions, gated by a default-deny policy, with an approval prompt for anything
+irreversible and an audit line for everything that runs.
 
-Speech never leaves the machine. There is no account, no API key, and no
-network call in the voice path.
+Nothing to install for the voice part. No engine, no model download, no API
+key, no account. If you are running Omarchy, the speech half is already there.
 
 ## Two front-ends, one gate
 
 ```
   VOICE                              AGENT (optional)
-  Super+D        dictate ──┐     ┌── Claude Code, or any MCP client
-  Super+Shift+D  command ──┤     │
-                           ▼     ▼
-                   ┌──────────────────┐
-                   │ INTENT RESOLVER  │  matched against a registry,
-                   └────────┬─────────┘  never free-form
-                            ▼
-                   ┌──────────────────┐
-                   │  POLICY ENGINE   │  allow · ask · deny
-                   └────────┬─────────┘
-                       ┌────┴────┐
-                   approval    audit
-                    overlay     log
+  F9   dictate  ─── voxtype ──┐  ┌── Claude Code, or any MCP client
+  F10  command  ─── voxtype ──┤  │
+                              ▼  ▼
+                    ┌──────────────────┐
+                    │ INTENT REGISTRY  │  declared templates,
+                    └────────┬─────────┘  never a free-form prompt
+                             ▼
+                    ┌──────────────────┐
+                    │  POLICY ENGINE   │  allow · ask · deny
+                    └────────┬─────────┘
+                        ┌────┴────┐
+                    approval    audit
+                     overlay     log
 ```
 
-**Dictation deliberately does not pass through the policy.** You pressing a key
-and speaking is you typing. Gating it would make it unusable — and the policy
-forbids typing into terminals, which is right for an agent and wrong for you.
-Only command mode and agent actions are gated.
-
-The agent half is optional. Voice works with it turned off, and needs neither
-`bun` nor an MCP client.
+**Dictation is untouched.** `F9` remains exactly what Omarchy shipped. This
+plugin registers as Voxtype's post-processing hook, and on the dictation path
+that hook is a `cat` — about 20ms, no runtime started, text returned verbatim.
+Only a phrase spoken in command mode is ever diverted.
 
 ## Install
 
 ```bash
 omarchy plugin add https://github.com/Zedster07/omarchy-desktop-agent.git --enable --yes
-sudo pacman -S whisper-cpp
 desktop-agent setup
 ```
 
-`setup` downloads a speech model, writes two user units, and starts them.
-Nothing runs on its own at install time: Omarchy never executes an install hook
-for a plugin, and this one does not try to work around that. Check state at any
-time with `desktop-agent doctor`.
+`setup` registers the Voxtype hook (backing up your config first, and refusing
+to clobber a post-process command you already had) and prints the one keybinding
+to add. `desktop-agent doctor` tells you the state of everything at any time.
 
-Then bind the keys:
-
-```
-bind  = SUPER, D, exec, desktop-voice start dictate
-bindr = SUPER, D, exec, desktop-voice stop
-bind  = SUPER SHIFT, D, exec, desktop-voice start command
-bindr = SUPER SHIFT, D, exec, desktop-voice stop
+```lua
+-- ~/.config/hypr/bindings.lua
+o.bind("F10", "Voice command", "desktop-agent-arm")
+o.bind("F10", "Voice command (stop)", "voxtype record stop", { release = true })
 ```
 
-## Why the transcript is filtered
+## The action space is a registry, not a prompt
 
-Whisper's decoder is an autoregressive language model. That is why it gives you
-punctuation and casing for free, and it is the same reason it can keep
-generating text once the audio stops supporting it — the familiar
-"Thank you for watching!" on a silent clip is the model completing a pattern
-from captioned web video, not mishearing you.
+This is the design decision everything else follows from. A spoken phrase is
+matched against declared templates with typed slots:
 
-You cannot remove that; it is the architecture. So `voice/filter.ts` fences it.
-Nothing reaches your keyboard until it passes:
-
-| Rule | Catches |
-|---|---|
-| `vad-floor` | Microphone never got loud enough for speech to have happened |
-| `no-speech-prob` | The engine's own estimate that this was not speech |
-| `logprob` | Mean token probability below −1.0 — the decoder was guessing |
-| `non-speech-tag` | `[MUSIC]`, `(applause)`, `♪…♪` |
-| `artifact` | A known filler phrase as the **entire** utterance |
-| `compression` | Repetition loops, via gzip ratio > 2.4 |
-| `phrase-repeat` | "open the door open the door open the door" |
-| `rate` | More words than the audio duration could contain |
-
-Push-to-talk is close to the best case for this: short utterances, an explicit
-start and stop, a close mic, one speaker, and you watching the result appear.
-Most documented Whisper hallucination is a long-form unattended problem.
-
-Rejections are never silent — the HUD says which rule fired and why.
-
-## Model choice is a latency decision
-
-Dictation lives or dies on the gap between releasing the key and seeing text.
-A model that is a few percent more accurate and four seconds slower is not a
-better dictation engine.
-
-Whisper pads every clip to a fixed 30-second window, so this cost is roughly
-**constant** — a two-second phrase costs the same as a fifteen-second one.
-
-Measured on an i7-6820HQ (2016, 8 threads, `ggml-cpu`, 5s clip):
-
-| Model | Threads | Median | |
-|---|---|---|---|
-| small | 4 | 6.02s | unusable |
-| small | 8 | 4.56s | unusable |
-| **base** | **8** | **1.19s** | ships |
-
-Hence `base` is the default and the units size threads from `nproc`. Measure
-before moving up:
-
-```bash
-desktop-agent benchmark
+```json
+{
+  "id": "workspace.switch",
+  "phrases": ["workspace {n}", "go to workspace {n}"],
+  "slots": { "n": { "type": "number", "min": 1, "max": 10 } },
+  "run": ["hyprctl", "dispatch", "workspace", "{n}"]
+}
 ```
 
-Under ~1.5s feels instant, under ~2.5s is usable, past that dictation stops
-being worth reaching for.
+No language model decides what to run. That makes it **fast** (matching is
+string work, so the hook returns in ~130ms and cannot trip Voxtype's timeout),
+**offline**, **auditable**, and — most importantly — **bounded**. It can only
+ever do things someone declared.
 
-## Recovering from a bad transcript
+A phrase that does not match well enough is reported as unrecognised. It is
+never guessed at, and never quietly typed into whatever window had focus.
 
-The filter is a fence, not a guarantee, so recovery is one keystroke:
+Two rules earn their keep:
 
-- Text is inserted as a **single undo unit** — `Ctrl+Z` removes the dictation,
-  not forty characters.
-- **Preview mode** (off by default) shows the transcript in the HUD and waits
-  for Enter instead of typing straight away.
-- Custom vocabulary primes the decoder with your names and jargon, which is the
-  cheapest accuracy win available.
+- **Filler words are stripped**, so *"could you please switch to workspace two"*
+  hits the same template as *"workspace 2"*.
+- **Homophone digits are not.** Mapping `"to"→2` looked helpful and silently
+  turned *"set volume to seventy"* into 2%. A preposition is far more common
+  than the digit it sounds like, and a wrong action is much worse than an
+  unmatched one — an unmatched one says so.
+
+## Other plugins can be spoken to
+
+There are over two thousand plugins on the marketplace and none of them can be
+spoken to. Any plugin that drops a `voice-intents.json` beside its manifest
+becomes voice-controllable, without knowing this plugin exists.
+
+Sources are **approved once** before their intents go live. Installing a plugin
+must not silently extend what your microphone can do to your machine.
+
+## Nothing irreversible happens quietly
+
+Intents can be marked `destructive`. Those always raise the approval overlay —
+whatever your confirmation setting says, and regardless of any lease — and the
+overlay drops its "Always" button so there is no one-click way to stop being
+asked.
+
+The prompt shows what it heard, which intent matched, the exact argv, and why
+it stopped. You are never approving a black box.
+
+## When a command is misheard
+
+Matching is strict on purpose, so the usual failure is *"No command matched"* —
+which costs you a repeat, not a wrong action. Turn `Match strictness` up if you
+get false matches, down if it is too fussy.
+
+For dictation itself, Voxtype owns accuracy: `voxtype configure` gives you the
+engine, model, language and a custom-vocabulary list. This plugin does not
+duplicate those settings — one source of truth per setting.
 
 ## Settings
 
-Everything is in the widget's settings form — engine, model, language,
-injection method, vocabulary, confirmation policy, lease ceiling. Nothing here
-needs a hand-edited config file.
+In the widget's settings form: whether spoken commands are on, when a command
+needs confirmation, whether other plugins may register intents, match
+strictness, and the unattended-lease ceiling.
 
-`policy.jsonc` remains a hand-edited file on purpose: it is the security
+`policy.jsonc` stays a hand-edited file on purpose: it is the security
 boundary, it wants comments, and it should be reviewed as text.
 
 ## The policy
@@ -174,13 +160,10 @@ this identically, gradients included.
 
 ## Requirements
 
-`pw-record` (pipewire), `wtype`, `socat`, `wl-clipboard`, and `whisper-cpp`
-**plus a ggml compute backend**: `ggml-cpu` is required. Arch ships ggml's
-backends as separate packages and the base `ggml` package depends on none of
-them, so `whisper-cpp` alone installs a server that loads a model and then
-cannot compute. `ggml-vulkan` (7 MB) is worth adding if you have a GPU;
-`ggml-cuda` pulls in the whole CUDA toolchain and is rarely worth it.
-The optional agent half additionally needs `bun`, and clicking needs `ydotool`.
+`voxtype` (ships with Omarchy) and `bun`. The optional agent half additionally
+uses `bun`; clicking needs `ydotool`.
+
+If Voxtype is somehow missing: `omarchy pkg add voxtype-bin`.
 
 ## Licence
 
