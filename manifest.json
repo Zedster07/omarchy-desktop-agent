@@ -1,0 +1,156 @@
+{
+  "schemaVersion": 1,
+  "id": "io.github.zedster07.desktop-agent",
+  "name": "Desktop Agent",
+  "version": "3.0.0",
+  "author": "Zedster07",
+  "license": "MIT",
+  "description": "Voice control and agent control for your desktop, on a leash you own. Push-to-talk dictation that types into any window, spoken commands matched against a declared registry, and a default-deny policy with an approval overlay and an audit trail.",
+  "kinds": ["service", "panel", "bar-widget"],
+  "entryPoints": {
+    "service": "Service.qml",
+    "panel": "Panel.qml",
+    "barWidget": "BarWidget.qml"
+  },
+  "barWidget": {
+    "displayName": "Desktop Agent",
+    "description": "Voice dictation, spoken commands, and policy-gated agent control with an approval overlay and kill switch.",
+    "category": "System",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "voiceEnabled": true,
+      "voiceEngine": "whisper.cpp",
+      "voiceModel": "small",
+      "voiceLanguage": "en",
+      "voiceInjection": "wtype",
+      "voicePreview": false,
+      "voiceVocabulary": "",
+      "commandsEnabled": true,
+      "commandConfirm": "destructive-only",
+      "thirdPartyIntents": true,
+      "agentEnabled": true,
+      "recapEnabled": true,
+      "recapIdleSec": 20,
+      "yoloMaxMinutes": 60,
+      "modelDir": ""
+    },
+    "schema": [
+      {
+        "key": "voiceEnabled",
+        "type": "boolean",
+        "label": "Voice input",
+        "description": "Enable push-to-talk dictation and spoken commands. Turning this off unloads the voice daemon entirely.",
+        "defaultValue": true
+      },
+      {
+        "key": "voiceEngine",
+        "type": "enum",
+        "label": "Speech engine",
+        "options": ["whisper.cpp", "moonshine", "parakeet"],
+        "defaultValue": "whisper.cpp",
+        "description": "whisper.cpp is the widest language coverage. moonshine is fastest for short push-to-talk phrases. parakeet is the most accurate in English. Only engines detected on this machine are offered at runtime."
+      },
+      {
+        "key": "voiceModel",
+        "type": "enum",
+        "label": "Model size",
+        "options": ["base", "small", "medium", "large-v3-turbo"],
+        "defaultValue": "small",
+        "description": "Larger is more accurate and slower. small is the recommended balance on CPU; large-v3-turbo is worth it if you have a GPU."
+      },
+      {
+        "key": "voiceLanguage",
+        "type": "string",
+        "label": "Language code",
+        "defaultValue": "en",
+        "description": "Forced, never auto-detected. Auto-detection on short audio is a common cause of a phrase coming back translated instead of transcribed."
+      },
+      {
+        "key": "voiceInjection",
+        "type": "enum",
+        "label": "Text injection",
+        "options": ["wtype", "clipboard-paste"],
+        "defaultValue": "wtype",
+        "description": "wtype types directly via the Wayland virtual-keyboard protocol. clipboard-paste is the fallback for apps that ignore synthetic key events; it restores your previous clipboard afterwards."
+      },
+      {
+        "key": "voicePreview",
+        "type": "boolean",
+        "label": "Preview before inserting",
+        "description": "Show the transcript in the voice HUD and wait for Enter instead of typing it straight away. Off is faster; on is safer when dictating into something consequential.",
+        "defaultValue": false
+      },
+      {
+        "key": "voiceVocabulary",
+        "type": "string",
+        "label": "Custom vocabulary",
+        "defaultValue": "",
+        "description": "Comma-separated names, jargon, and project terms used to prime the decoder. Markedly improves accuracy on technical words the model would otherwise guess at."
+      },
+      {
+        "key": "commandsEnabled",
+        "type": "boolean",
+        "label": "Spoken commands",
+        "description": "Enable command mode, where a spoken phrase is matched against the intent registry and run through the policy instead of being typed as text.",
+        "defaultValue": true
+      },
+      {
+        "key": "commandConfirm",
+        "type": "enum",
+        "label": "Confirm spoken commands",
+        "options": ["never", "destructive-only", "always"],
+        "defaultValue": "destructive-only",
+        "description": "Whether a matched command shows a confirmation in the HUD before it runs. This is layered on top of the policy, which can still force an approval regardless."
+      },
+      {
+        "key": "thirdPartyIntents",
+        "type": "boolean",
+        "label": "Let other plugins register commands",
+        "description": "Read voice-intents.json from other installed Omarchy plugins so their actions can be spoken. Each newly discovered plugin has to be approved once before its intents become live.",
+        "defaultValue": true
+      },
+      {
+        "key": "agentEnabled",
+        "type": "boolean",
+        "label": "Agent control (MCP)",
+        "description": "Allow an MCP client such as Claude Code to drive the desktop through the same policy. Voice works with this off.",
+        "defaultValue": true
+      },
+      {
+        "key": "recapEnabled",
+        "type": "boolean",
+        "label": "End-of-run recap",
+        "description": "After the agent has been idle a while, slide in a card listing everything it did. Never takes focus.",
+        "defaultValue": true
+      },
+      {
+        "key": "recapIdleSec",
+        "type": "integer",
+        "label": "Recap idle window (seconds)",
+        "min": 5,
+        "max": 300,
+        "step": 5,
+        "defaultValue": 20,
+        "description": "MCP has no end-of-task signal, so a run counts as finished once the desktop has been quiet this long."
+      },
+      {
+        "key": "yoloMaxMinutes",
+        "type": "integer",
+        "label": "Maximum unattended lease (minutes)",
+        "min": 5,
+        "max": 240,
+        "step": 5,
+        "defaultValue": 60,
+        "description": "Hard ceiling on a full-access lease, re-checked on every action. A longer lease is truncated, not honoured."
+      },
+      {
+        "key": "modelDir",
+        "type": "path",
+        "label": "Model folder",
+        "defaultValue": "",
+        "description": "Where speech models are stored. Leave empty for ~/.local/share/desktop-agent/models."
+      }
+    ]
+  }
+}

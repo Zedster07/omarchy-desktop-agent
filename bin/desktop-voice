@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# Push-to-talk entry point. Bound to a key by Hyprland; talks to the daemon
+# over a unix socket so a keypress costs a connect and a write, not a process
+# start and a model load.
+#
+#   bind  = SUPER, D, exec, desktop-voice start dictate
+#   bindr = SUPER, D, exec, desktop-voice stop
+#   bind  = SUPER SHIFT, D, exec, desktop-voice start command
+#   bindr = SUPER SHIFT, D, exec, desktop-voice stop
+set -euo pipefail
+
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock"
+
+if [[ ! -S "$SOCK" ]]; then
+  notify-send -a "Desktop Agent" "Voice is not running" \
+    "Open the Desktop Agent panel and run setup, or start it with: systemctl --user start desktop-agent-voice" 2>/dev/null || true
+  exit 1
+fi
+
+# socat is the reliable writer here; fall back to bash's own /dev/tcp-style
+# redirection is not available for unix sockets, so require socat and say so.
+if command -v socat >/dev/null 2>&1; then
+  printf '%s' "$*" | socat - "UNIX-CONNECT:$SOCK" >/dev/null 2>&1 || true
+elif command -v nc >/dev/null 2>&1; then
+  printf '%s' "$*" | nc -U -w1 "$SOCK" >/dev/null 2>&1 || true
+else
+  notify-send -a "Desktop Agent" "Missing dependency" "Voice needs socat or netcat-openbsd." 2>/dev/null || true
+  exit 1
+fi

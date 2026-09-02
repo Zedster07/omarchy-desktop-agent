@@ -1,0 +1,18 @@
+[Unit]
+Description=Desktop Agent speech engine (whisper.cpp server)
+Documentation=https://github.com/Zedster07/omarchy-desktop-agent
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Keeps the model resident. This is the difference between ~1.2s and ~2.5s
+# from key-up to text, which is the difference between "magic" and "broken".
+Environment=MODEL=%h/.local/share/desktop-agent/models/ggml-small.bin
+ExecStart=/usr/bin/whisper-server --host 127.0.0.1 --port 8178 --model ${MODEL} --threads 4 --no-timestamps
+Restart=on-failure
+RestartSec=3
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target
