@@ -24,6 +24,13 @@ export interface Intent {
   run: string[]
   /** normal | destructive — destructive always asks, whatever the settings say. */
   severity?: "normal" | "destructive"
+  /**
+   * "window" means the action targets a specific window and its argv contains
+   * {window}. Such an intent is only ever run against the window that was
+   * focused when the phrase was SPOKEN, never against whatever is focused when
+   * it eventually executes.
+   */
+  scope?: "global" | "window"
   description?: string
   /** Set by the loader for intents contributed by another plugin. */
   source?: string

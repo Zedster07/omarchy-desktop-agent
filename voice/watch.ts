@@ -11,6 +11,7 @@ import { loadIntents } from "./registry.ts"
 import { existsSync, unlinkSync } from "node:fs"
 
 const RESULT = process.argv[2]
+const TARGET = `${process.env.HOME}/.local/state/desktop-agent/command-target.json`
 const PLUGIN_DIR = new URL("..", import.meta.url).pathname
 const SHELL_IPC = ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call",
                    "io.github.zedster07.desktop-agent"]
@@ -67,11 +68,21 @@ if (!match) {
                  errorText: "No command matched" }, 2400)
 }
 
+// The window that was focused when the phrase was spoken, captured at
+// key-down by desktop-agent-arm.
+let target: any = null
+try { target = await Bun.file(TARGET).json() } catch {}
+
 Bun.spawn(["bun", `${PLUGIN_DIR}voice/execute.ts`, JSON.stringify({
   phrase,
   intent: match!.intent,
   argv: match!.argv,
   score: match!.score,
+  target: target && target.address ? {
+    address: String(target.address),
+    cls: String(target.class ?? ""),
+    title: String(target.title ?? ""),
+  } : null,
 })], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
 
 // execute.ts owns the HUD from here.

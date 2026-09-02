@@ -1,5 +1,5 @@
 {
-  "$comment": "Built-in voice intents. Every action is a fixed argv with typed slots, so nothing here can be talked into running an arbitrary command. Hyprland actions use the Lua dispatcher API (hl.dsp.*): `hyprctl dispatch workspace 5` is the OLD syntax and now fails with a Lua parse error, which is exactly how the first working build managed to match a command correctly and then do nothing. Add your own in ~/.config/desktop-agent/intents.json.",
+  "$comment": "Built-in voice intents. Every action is a fixed argv with typed slots.\n\nWindow-scoped intents declare \"scope\": \"window\" and use the {window} placeholder. That placeholder is filled with the window that was FOCUSED WHEN YOU SPOKE, captured at key-down, not whatever happens to be focused when the command finally runs -- seconds later, after transcription and possibly an approval prompt that itself takes focus. Getting this wrong closed the wrong window.\n\nhl.dsp.window.close falls back to the FOCUSED window when its selector does not resolve, so execute.ts verifies the target still exists before dispatching and refuses if it does not. Never write a window-scoped intent without {window}.",
   "intents": [
     {
       "id": "workspace.switch",
@@ -59,10 +59,11 @@
       "run": [
         "hyprctl",
         "dispatch",
-        "hl.dsp.window.close()"
+        "hl.dsp.window.close({ window = \"address:{window}\" })"
       ],
       "severity": "destructive",
-      "description": "Close the focused window"
+      "description": "Close the window you were looking at",
+      "scope": "window"
     },
     {
       "id": "window.fullscreen",
@@ -74,9 +75,10 @@
       "run": [
         "hyprctl",
         "dispatch",
-        "hl.dsp.window.fullscreen({ mode = \"fullscreen\" })"
+        "hl.dsp.window.fullscreen({ mode = \"fullscreen\", window = \"address:{window}\" })"
       ],
-      "description": "Toggle fullscreen"
+      "description": "Fullscreen the window you were looking at",
+      "scope": "window"
     },
     {
       "id": "system.lock",

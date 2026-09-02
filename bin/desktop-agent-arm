@@ -25,7 +25,17 @@ if ! command -v voxtype >/dev/null 2>&1; then
 fi
 
 # A stale result from a previous run must never be mistaken for this one.
-rm -f "$RESULT"
+rm -f "$RESULT" "$STATE/command-target.json"
+
+# Capture the focused window NOW, at key-down, while the user is still looking
+# at whatever they are about to talk about.
+#
+# This is the whole fix for a real incident: "close this window" was spoken at a
+# browser, but by the time the phrase had been transcribed and approved, the
+# approval overlay had taken focus and given it back elsewhere, so the close
+# landed on a terminal. A window-scoped command must act on the window that was
+# in front of you when you spoke, not on whatever won the focus race afterwards.
+hyprctl activewindow -j > "$STATE/command-target.json" 2>/dev/null || echo '{}' > "$STATE/command-target.json"
 
 voxtype record start --file "$RESULT" >/dev/null 2>&1
 
