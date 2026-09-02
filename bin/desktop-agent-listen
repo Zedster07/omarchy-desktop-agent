@@ -1,0 +1,18 @@
+#!/usr/bin/env bash
+# Push-to-talk entry point.
+#
+#   bind  = SUPER, D, exec, desktop-agent-listen dictate
+#   bindr = SUPER, D, exec, desktop-agent-listen stop
+#   bind  = F10,        exec, desktop-agent-listen command
+#   bindr = F10,        exec, desktop-agent-listen stop
+#
+# A socket write, so a keypress costs a connect -- not a process start and a
+# model load.
+set -euo pipefail
+SOCK="${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock"
+if [[ ! -S "$SOCK" ]]; then
+  notify-send -a "Desktop Agent" "Voice is not running" \
+    "systemctl --user start desktop-agent-voice" 2>/dev/null || true
+  exit 1
+fi
+printf '%s' "$*" | socat - "UNIX-CONNECT:$SOCK" >/dev/null 2>&1 || true

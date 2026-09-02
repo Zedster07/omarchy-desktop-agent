@@ -7,7 +7,8 @@
 # this or pressed the button in the panel.
 set -uo pipefail
 
-PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+PLUGIN_DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
+UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 
 
 
@@ -24,31 +25,37 @@ doctor() {
   bold "Desktop Agent — health check"
 
   echo; bold "Voice"
-  if have voxtype; then
-    ok "voxtype $(voxtype --version 2>/dev/null | awk '{print $2}')"
+  for c in pw-record wtype socat wl-copy; do
+    if have "$c"; then ok "$c"; else bad "$c is missing"; missing=1; fi
+  done
+
+  local venv="$HOME/.local/share/desktop-agent/venv"
+  if [[ -x "$venv/bin/python" ]] && "$venv/bin/python" -c "import faster_whisper" 2>/dev/null; then
+    ok "faster-whisper installed"
   else
-    bad "voxtype is missing — Omarchy normally ships it (omarchy pkg add voxtype-bin)"; missing=1
+    bad "faster-whisper missing  (run: desktop-agent setup)"; missing=1
   fi
 
-  if have wtype || have ydotool; then ok "text injection available"; else warn "neither wtype nor ydotool found"; fi
-
-  # The hook is what makes spoken commands possible at all. Without it voxtype
-  # types every phrase, including the ones meant as commands.
-  # Nothing to check in voxtype's config any more. Command mode uses
-  # `voxtype record start --file`, so dictation runs the exact code path it
-  # ran before this plugin existed -- no hook, no post-processor, no tax.
-  # Model and backend are voxtype's, but they decide whether any of this is
-  # usable, so the health check reports them rather than staying silent.
-  local vxmodel vxbackend
-  vxmodel="$(voxtype config 2>/dev/null | grep -A1 '\[whisper\]' | grep 'model' | cut -d'"' -f2)"
-  vxbackend="$(voxtype setup gpu --status 2>/dev/null | grep -i 'active backend' | cut -d: -f2- | xargs)"
-  [[ -n "$vxmodel" ]] && ok "speech model ${vxmodel} on ${vxbackend:-unknown backend}"
-  if [[ "$vxmodel" == base* || "$vxmodel" == tiny* ]]; then
-    warn "small.en is markedly more accurate on short commands (see README)"
+  local health
+  health="$(desktop-agent-config stt-status 2>/dev/null)"
+  if [[ "$health" == *'"ok": true'* ]]; then
+    ok "speech service up — $(echo "$health" | grep -oE '"model": "[^"]+"' | cut -d'"' -f4)"
+  else
+    bad "speech service down  (systemctl --user start desktop-agent-stt)"; missing=1
   fi
-  # A Vulkan device without fp16 can be slower than the CPU. Say so.
-  if journalctl --user -u voxtype -n 200 --no-pager 2>/dev/null | grep -q 'ggml_vulkan: 0 = .*fp16: 0'; then
-    warn "the selected Vulkan device reports fp16: 0 — it may be slower than another one"
+
+  if [[ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock" ]]; then
+    ok "voice daemon running"
+  else
+    bad "voice daemon down  (systemctl --user start desktop-agent-voice)"; missing=1
+  fi
+
+  if [[ "$(desktop-agent-config get voice.sttMode 2>/dev/null)" == "remote" ]]; then
+    if desktop-agent-config all 2>/dev/null | grep -q '"hasRemoteKey": true'; then
+      ok "remote transcription configured"
+    else
+      bad "remote selected but no API key set"; missing=1
+    fi
   fi
 
   if [[ "$(hyprctl getoption decoration:blur:enabled 2>/dev/null | head -1)" == *"1"* ]] \
@@ -58,7 +65,7 @@ doctor() {
     warn "compositor blur off — overlays still work, they just look flat  (desktop-agent keybinds)"
   fi
 
-  if [[ -f "$HOME/.config/hypr/bindings.lua" ]] && grep -q "desktop-agent-arm" "$HOME/.config/hypr/bindings.lua" 2>/dev/null; then
+  if [[ -f "$HOME/.config/hypr/bindings.lua" ]] && grep -q "desktop-agent-listen" "$HOME/.config/hypr/bindings.lua" 2>/dev/null; then
     ok "command-mode keybinding present"
   else
     warn "no command-mode keybinding  (run: desktop-agent keybinds)"
@@ -96,12 +103,16 @@ keybinds() {
 
 Add to ~/.config/hypr/bindings.lua:
 
-    o.bind("F10", "Voice command", "desktop-agent-arm")
-    o.bind("F10", "Voice command (stop)", "voxtype record stop", { release = true })
+    -- This plugin owns the speech path now, so unbind voxtype's keys first;
+    -- two things listening on one key race for the microphone.
+    hl.unbind("F9")
+    hl.unbind("SUPER + CTRL + X")
 
-Dictation is unchanged and still Omarchy's own:
-    F9              push-to-talk dictation
-    SUPER + CTRL+X  toggle dictation
+    o.bind("F9",  "Dictate",             "desktop-agent-listen start dictate")
+    o.bind("F9",  "Dictate (stop)",      "desktop-agent-listen stop",    { release = true })
+    o.bind("F10", "Voice command",       "desktop-agent-listen start command")
+    o.bind("F10", "Voice command (stop)","desktop-agent-listen stop",    { release = true })
+    o.bind("SUPER + ESCAPE", "Cancel voice", "desktop-agent-listen cancel")
 
 Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:
 
@@ -118,8 +129,28 @@ BINDS
 case "${1:-doctor}" in
   doctor) doctor ;;
   setup)
-    have voxtype || { bad "voxtype is not installed"; echo "    omarchy pkg add voxtype-bin"; exit 1; }
-    mkdir -p "$HOME/.config/desktop-agent"
+    local venv="$HOME/.local/share/desktop-agent/venv"
+    if [[ ! -x "$venv/bin/python" ]]; then
+      bold "Creating the speech environment (a few hundred MB, once)"
+      python3 -m venv "$venv" || { bad "could not create a venv"; exit 1; }
+    fi
+    if ! "$venv/bin/python" -c "import faster_whisper" 2>/dev/null; then
+      bold "Installing faster-whisper"
+      "$venv/bin/pip" install --quiet --upgrade pip
+      "$venv/bin/pip" install faster-whisper || { bad "install failed"; exit 1; }
+    fi
+    ok "speech environment ready"
+
+    mkdir -p "$HOME/.config/desktop-agent" "$UNITS"
+    local bun_path; bun_path="$(command -v bun || echo /usr/bin/bun)"
+    sed -e "s|ExecStart=%h/.local/share/desktop-agent/venv/bin/python .*|ExecStart=$venv/bin/python $PLUGIN_DIR/stt/server.py|" \
+        "$PLUGIN_DIR/systemd/desktop-agent-stt.service" > "$UNITS/desktop-agent-stt.service"
+    sed -e "s|ExecStart=.*voiced.ts|ExecStart=$bun_path $PLUGIN_DIR/voice/voiced.ts|" \
+        "$PLUGIN_DIR/systemd/desktop-agent-voice.service" > "$UNITS/desktop-agent-voice.service"
+    systemctl --user daemon-reload
+    systemctl --user enable --now desktop-agent-stt.service desktop-agent-voice.service
+    ok "services started (the model loads on first start)"
+
     keybinds
     doctor
     ;;

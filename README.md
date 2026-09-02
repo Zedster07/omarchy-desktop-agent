@@ -14,57 +14,60 @@ key, no account. If you are running Omarchy, the speech half is already there.
 ## Two front-ends, one gate
 
 ```
-  VOICE                              AGENT (optional)
-  F9   dictate  ─── voxtype ──┐  ┌── Claude Code, or any MCP client
-  F10  command  ─── voxtype ──┤  │
-                              ▼  ▼
-                    ┌──────────────────┐
-                    │ INTENT REGISTRY  │  declared templates,
-                    └────────┬─────────┘  never a free-form prompt
-                             ▼
-                    ┌──────────────────┐
-                    │  POLICY ENGINE   │  allow · ask · deny
-                    └────────┬─────────┘
-                        ┌────┴────┐
-                    approval    audit
-                     overlay     log
+  VOICE                                AGENT (optional)
+  F9   dictate  ─┐                 ┌── Claude Code, or any MCP client
+  F10  command  ─┤                 │
+                 ▼                 ▼
+          ┌──────────────┐   ┌──────────────────┐
+          │ capture+VAD  │   │ INTENT REGISTRY  │
+          │ stt/server.py│──▶│ declared templates│
+          └──────────────┘   └────────┬─────────┘
+                                      ▼
+                             ┌──────────────────┐
+                             │  POLICY ENGINE   │  allow · ask · deny
+                             └────────┬─────────┘
+                                 ┌────┴────┐
+                             approval    audit
+                              overlay     log
 ```
 
-**Dictation is untouched.** `F9` remains exactly what Omarchy shipped. This
-plugin registers as Voxtype's post-processing hook, and on the dictation path
-that hook is a `cat` — about 20ms, no runtime started, text returned verbatim.
-Only a phrase spoken in command mode is ever diverted.
+## The speech stack
 
-## Install
+This plugin owns the whole speech path: capture, VAD, transcription,
+filtering, injection. It does not drive an external dictation tool.
 
-```bash
-omarchy plugin add https://github.com/Zedster07/omarchy-desktop-agent.git --enable --yes
-desktop-agent setup
-```
+That was not the original plan. The first version wrapped Omarchy's bundled
+voxtype, on the reasoning that a plugin should not reinvent something shipping
+with the OS. Three things changed the calculation: voxtype's released build
+accepts a remote-transcription config and silently ignores it, it exposes no
+vocabulary biasing, and integrating with it meant a result file plus a status
+stream — three separate bugs came out of that seam alone.
 
-`setup` registers the Voxtype hook (backing up your config first, and refusing
-to clobber a post-process command you already had) and prints the one keybinding
-to add. `desktop-agent doctor` tells you the state of everything at any time.
+The deciding number was the runtime. Same machine, same 5s clip:
 
-```lua
--- ~/.config/hypr/bindings.lua
-o.bind("F10", "Voice command", "desktop-agent-arm")
-o.bind("F10", "Voice command (stop)", "voxtype record stop", { release = true })
-```
+| engine | |
+|---|---|
+| faster-whisper `base.en`, CPU int8 | **0.96s** |
+| faster-whisper `small.en`, CPU int8 | **2.02s** |
+| whisper.cpp (voxtype) on the Vulkan iGPU | 13.06s |
 
-## The look
+CTranslate2 is simply a better runtime than whisper.cpp here: `small.en` on
+plain CPU beats whisper.cpp on the GPU by six times, and is the more accurate
+model. Owning the pipeline turned out to be less code than working around not
+owning it.
 
-The voice HUD is a radial core, not a card in the corner: concentric rings,
-graduations, counter-rotating arcs, and your voice drawn as a sunburst around
-a centre that breathes while it listens. Every colour comes from Omarchy's
-theme tokens, so a theme swap repaints it.
+`stt/server.py` keeps a model warm and answers `POST /transcribe`. Two
+backends behind one interface:
 
-Compositor blur behind the overlays is optional and off unless you add the
-layer rules `desktop-agent keybinds` prints. It is close to free on a default
-setup — every window is fully opaque, so there is nothing translucent for the
-compositor to blur behind, and the cost lands only on the two plugin surfaces
-while one of them is on screen. Without it everything still works; it just
-looks flat.
+- **local** — faster-whisper, int8, nothing leaves the machine.
+- **remote** — any OpenAI-compatible endpoint. Groq's `whisper-large-v3-turbo`
+  is the useful one: a far larger model, no local compute, and your audio
+  leaves the machine. Off unless you choose it and add a key.
+
+Everything that makes whisper trustworthy lives in that service, not in the
+caller: VAD **before** decode, forced language, temperature 0, no conditioning
+on previous text, and per-segment confidence thresholds. A decoder handed
+silence writes plausible sentences, so the silence never reaches it.
 
 ## The action space is a registry, not a prompt
 
@@ -134,45 +137,39 @@ it stopped. You are never approving a black box.
 
 ## If it keeps mishearing you
 
-Accuracy is voxtype's, not this plugin's, but it is the thing that decides
-whether any of this is usable, so it is worth saying where the wins are.
-
-Omarchy ships whisper `base.en` on CPU. That is the second-smallest model and
-it fails in a characteristic way on short commands -- "open chrome" heard as
-"hope chrome", a song title heard as an ordinary phrase -- because whisper's
-decoder is a language model filling in what the acoustics left ambiguous.
+Check the microphone before the model. A signal that is too quiet or clipped
+destroys the waveform, and whisper responds by writing plausible language
+instead of what you said — "open chrome" heard as "hope chrome", or an opening
+word invented outright.
 
 ```bash
-sudo voxtype setup gpu --enable            # Vulkan; the binary already ships
-voxtype setup --download --model small.en
-voxtype setup model --set small.en --restart
+desktop-agent-mictest
 ```
 
-**Check which GPU it picked.** On a hybrid-graphics laptop the answer is not
-the obvious one. Measured here, small.en on a 2s clip:
+It records five seconds, reports peak/RMS/clipping, and transcribes the same
+clip. Peak wants to be roughly **0.2–0.6** with no clipping. Two real failures
+found this way on one laptop: a USB dongle capturing at peak 0.013 (barely
+above the noise floor), and the internal mic clipping 34% of samples behind
++50 dB of hardware gain.
 
-| device | | |
-|---|---|---|
-| Intel HD 530 (iGPU) | `fp16: 1` | **~7.0s** |
-| Quadro M2000M (discrete) | `fp16: 0` | ~23.8s |
+The durable fix is automatic gain control rather than a hand-tuned level,
+because the right gain depends on how loudly you happen to be speaking.
+PipeWire's `libpipewire-module-echo-cancel` wraps the same webrtc-audio-processing
+a browser applies to `getUserMedia`:
 
-The discrete card is three times slower because it is Maxwell, reports no
-fast fp16, and ggml falls back to fp32. Pin the right one with a systemd
-drop-in for the voxtype unit:
-
-```ini
-[Service]
-Environment=GGML_VK_VISIBLE_DEVICES=0
+```
+context.modules = [
+  { name = libpipewire-module-echo-cancel
+    args = {
+      aec.args = { webrtc.gain_control = true, webrtc.noise_suppression = true }
+      capture.props = { node.target = "<your mic>" }
+      source.props  = { node.name = "mic_agc" }
+    } }
+]
 ```
 
-`journalctl --user -u voxtype | grep ggml_vulkan` lists the devices and their
-fp16 support. Prefer whichever reports `fp16: 1`, not whichever is
-"the real graphics card".
-
-If that is still too slow, `voxtype setup onnx --enable` plus the
-`parakeet-tdt-0.6b-v3-int8` model is the other direction: NVIDIA's TDT model
-is at the top of the English leaderboards and is not autoregressive, so it is
-less prone to the confident-wrong-word failure above.
+Then make `mic_agc` your default source. Leave the raw mic with headroom
+(~30%) so AGC has something to work with rather than a clipped signal.
 
 ## When a command is misheard
 
@@ -232,10 +229,12 @@ this identically, gradients included.
 
 ## Requirements
 
-`voxtype` (ships with Omarchy) and `bun`. The optional agent half additionally
-uses `bun`; clicking needs `ydotool`.
+`pw-record` (pipewire), `wtype`, `socat`, `wl-clipboard`, `python3`, `bun`.
 
-If Voxtype is somehow missing: `omarchy pkg add voxtype-bin`.
+`desktop-agent setup` creates a virtualenv under
+`~/.local/share/desktop-agent/` and installs faster-whisper into it — about
+430 MB, plus the model on first run. Nothing is installed system-wide and
+voxtype is not required.
 
 ## Licence
 

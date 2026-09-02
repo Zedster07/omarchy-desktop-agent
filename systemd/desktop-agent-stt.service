@@ -1,0 +1,19 @@
+[Unit]
+Description=Desktop Agent speech-to-text
+Documentation=https://github.com/Zedster07/omarchy-desktop-agent
+After=graphical-session.target
+PartOf=graphical-session.target
+
+[Service]
+Type=simple
+# Keeps the model resident. Loading per utterance costs seconds; this is the
+# difference between dictation feeling instant and feeling broken.
+Environment=DA_STT_MODEL=small.en
+Environment=DA_STT_PORT=8791
+ExecStart=%h/.local/share/desktop-agent/venv/bin/python %h/.config/omarchy/plugins/io.github.zedster07.desktop-agent/stt/server.py
+Restart=on-failure
+RestartSec=3
+Slice=session.slice
+
+[Install]
+WantedBy=graphical-session.target

@@ -1,0 +1,335 @@
+#!/usr/bin/env bun
+//
+// The voice daemon. Owns one utterance from key-down to action.
+//
+//   desktop-agent-listen dictate|command   (Hyprland bind,  key down)
+//     -> pw-record streams s16le mono 16k in
+//     -> each chunk updates the HUD's radial waveform
+//   desktop-agent-listen stop              (Hyprland bindr, key up)
+//     -> the buffer is wrapped in a WAV header and POSTed to stt/server.py
+//     -> the result goes through voice/filter.ts before anything happens
+//     -> dictate: typed with wtype;  command: matched, gated, executed
+//
+// Push-to-talk, not VAD-triggered listening: a held key makes the utterance
+// boundary KNOWN rather than guessed, which removes the phantom-transcript
+// class of bug entirely instead of filtering it afterwards.
+//
+// Audio never touches the disk on our side and never leaves the machine unless
+// the user has explicitly chosen a remote engine.
+
+import { filterTranscript } from "./filter.ts"
+import { resolve } from "./intents.ts"
+import { loadIntents } from "./registry.ts"
+import { route, plan } from "./plan.ts"
+import { setting, settingStr } from "./settings.ts"
+import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { unlink } from "node:fs/promises"
+
+const HOME = process.env.HOME!
+const RUNTIME = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? 1000}`
+const SOCK = `${RUNTIME}/desktop-agent-voice.sock`
+const STATE = `${HOME}/.local/state/desktop-agent`
+const LOG = `${HOME}/.local/share/desktop-agent/voice.log`
+const STT = `http://127.0.0.1:${process.env.DA_STT_PORT || 8791}`
+const PLUGIN_DIR = new URL("..", import.meta.url).pathname
+const SHELL_IPC = ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call",
+                   "io.github.zedster07.desktop-agent"]
+
+const RATE = 16000
+type Mode = "dictate" | "command"
+
+function log(msg: string) {
+  try {
+    mkdirSync(`${HOME}/.local/share/desktop-agent`, { recursive: true })
+    Bun.write(LOG, `${new Date().toISOString()} ${msg}\n`).catch(() => {})
+  } catch {}
+  console.error(msg)
+}
+
+function hud(patch: Record<string, unknown>) {
+  Bun.spawn([...SHELL_IPC, "voice", JSON.stringify(patch)],
+            { stdout: "ignore", stderr: "ignore" })
+}
+
+async function clearHud(patch: Record<string, unknown>, holdMs = 1800) {
+  hud(patch)
+  await Bun.sleep(holdMs)
+  hud({ state: "idle", transcript: "", errorText: "", matched: "" })
+}
+
+// ------------------------------------------------------------------- audio
+
+function wavHeader(bytes: number): Buffer {
+  const h = Buffer.alloc(44)
+  h.write("RIFF", 0); h.writeUInt32LE(36 + bytes, 4); h.write("WAVE", 8)
+  h.write("fmt ", 12); h.writeUInt32LE(16, 16); h.writeUInt16LE(1, 20)
+  h.writeUInt16LE(1, 22); h.writeUInt32LE(RATE, 24); h.writeUInt32LE(RATE * 2, 28)
+  h.writeUInt16LE(2, 32); h.writeUInt16LE(16, 34)
+  h.write("data", 36); h.writeUInt32LE(bytes, 40)
+  return h
+}
+
+/** Curved RMS: a linear meter barely leaves the floor at conversational volume. */
+function chunkLevel(buf: Buffer): number {
+  const n = Math.floor(buf.length / 2)
+  if (n === 0) return 0
+  let sum = 0
+  for (let i = 0; i < n; i++) {
+    const s = buf.readInt16LE(i * 2) / 32768
+    sum += s * s
+  }
+  return Math.min(1, Math.pow(Math.sqrt(sum / n), 0.65) * 2.2)
+}
+
+class Recorder {
+  private proc: ReturnType<typeof Bun.spawn> | null = null
+  private chunks: Buffer[] = []
+  private levels: number[] = []
+  peak = 0
+  startedAt = 0
+  mode: Mode = "dictate"
+
+  get active() { return this.proc !== null }
+  get seconds() { return this.startedAt ? (Date.now() - this.startedAt) / 1000 : 0 }
+
+  start(mode: Mode) {
+    if (this.proc) return
+    this.mode = mode
+    this.chunks = []; this.levels = []; this.peak = 0
+    this.startedAt = Date.now()
+    // --raw is not optional: without it pw-record emits a PipeWire container
+    // rather than PCM and every sample read below parses metadata.
+    this.proc = Bun.spawn(
+      ["pw-record", "--raw", "--rate", String(RATE), "--channels", "1",
+       "--format", "s16", "-"],
+      { stdout: "pipe", stderr: "ignore", stdin: "ignore" })
+    hud({ state: "listening", mode, transcript: "", errorText: "", levels: [], elapsed: 0 })
+    this.pump()
+  }
+
+  private async pump() {
+    const stream = this.proc?.stdout
+    if (!stream || typeof stream === "number") return
+    let since = 0
+    for await (const raw of stream as ReadableStream<Uint8Array>) {
+      if (!this.proc) break
+      const buf = Buffer.from(raw)
+      this.chunks.push(buf)
+      const lvl = chunkLevel(buf)
+      if (lvl > this.peak) this.peak = lvl
+      this.levels.push(lvl)
+      if (this.levels.length > 160) this.levels.splice(0, this.levels.length - 160)
+      if (++since >= 2) {
+        since = 0
+        hud({ levels: this.levels.slice(-72), elapsed: this.seconds })
+      }
+    }
+  }
+
+  stop(): { wav: Buffer; seconds: number; peak: number } | null {
+    if (!this.proc) return null
+    try { this.proc.kill() } catch {}
+    this.proc = null
+    const pcm = Buffer.concat(this.chunks)
+    this.chunks = []
+    if (pcm.length === 0) return null
+    return { wav: Buffer.concat([wavHeader(pcm.length), pcm]),
+             seconds: pcm.length / (RATE * 2), peak: this.peak }
+  }
+
+  cancel() {
+    if (!this.proc) return
+    try { this.proc.kill() } catch {}
+    this.proc = null
+    this.chunks = []
+  }
+}
+
+// -------------------------------------------------------------- transcribe
+
+const BIAS = ("Commands: open, close, launch, workspace, volume, mute, unmute, "
+  + "lock screen, fullscreen, screenshot, theme, brightness, play, YouTube, "
+  + "Chrome, Firefox, terminal, browser, editor, files.")
+
+/** The remote key lives with the STT config, never in settings.json. */
+function remoteKey(): string {
+  try {
+    const t = readFileSync(`${HOME}/.config/desktop-agent/stt.key`, "utf8").trim()
+    return t
+  } catch { return "" }
+}
+
+async function transcribe(wav: Buffer, mode: Mode): Promise<string> {
+  const sttMode = await settingStr("voice.sttMode", "local")
+  const bias = (await setting<boolean>("voice.biasPrompt", true)) && mode === "command"
+    ? BIAS : ""
+  const headers: Record<string, string> = {
+    "Content-Type": "application/octet-stream",
+    "X-Mode": sttMode === "remote" ? "remote" : "local",
+    "X-Prompt": bias,
+  }
+  if (sttMode === "remote") {
+    headers["X-Endpoint"] = await settingStr(
+      "voice.remoteEndpoint", "https://api.groq.com/openai/v1/audio/transcriptions")
+    headers["X-Remote-Model"] = await settingStr("voice.remoteModel", "whisper-large-v3-turbo")
+    headers["X-Key"] = remoteKey()
+  }
+  const res = await fetch(`${STT}/transcribe`, {
+    method: "POST", body: wav, headers, signal: AbortSignal.timeout(40000),
+  })
+  if (!res.ok) throw new Error(`stt ${res.status}`)
+  const j: any = await res.json()
+  if (j.error) throw new Error(String(j.error))
+  return String(j.text ?? "").trim()
+}
+
+// ------------------------------------------------------------------ inject
+
+async function inject(text: string) {
+  if (Bun.which("wtype")) {
+    // -- stops a leading dash in the transcript being read as a flag.
+    const p = Bun.spawn(["wtype", "--", text], { stderr: "pipe" })
+    if ((await p.exited) === 0) return
+    log("wtype failed, falling back to clipboard paste")
+  }
+  const prev = await new Response(
+    Bun.spawn(["wl-paste", "--no-newline"], { stdout: "pipe", stderr: "ignore" }).stdout,
+  ).text().catch(() => "")
+  const copy = Bun.spawn(["wl-copy"], { stdin: "pipe" })
+  copy.stdin.write(text); copy.stdin.end(); await copy.exited
+  if (Bun.which("wtype")) await Bun.spawn(["wtype", "-M", "ctrl", "-k", "v", "-m", "ctrl"]).exited
+  else if (Bun.which("ydotool")) await Bun.spawn(["ydotool", "key", "29:1", "47:1", "47:0", "29:0"]).exited
+  if (prev) setTimeout(() => {
+    const r = Bun.spawn(["wl-copy"], { stdin: "pipe" }); r.stdin.write(prev); r.stdin.end()
+  }, 250)
+}
+
+// -------------------------------------------------------------------- main
+
+const recorder = new Recorder()
+
+async function handleStop() {
+  if (!recorder.active) return
+  const mode = recorder.mode
+  const captured = recorder.stop()
+  if (!captured) { await clearHud({ state: "error", errorText: "Nothing was recorded" }, 1500); return }
+
+  hud({ state: "transcribing", mode, levels: [] })
+
+  let text = ""
+  try {
+    text = await transcribe(captured.wav, mode)
+  } catch (e) {
+    log(`transcription failed: ${e}`)
+    await clearHud({ state: "error", mode, errorText: "Speech service is not responding" }, 2600)
+    return
+  }
+
+  const verdict = filterTranscript(text, {
+    audioSeconds: captured.seconds, peakLevel: captured.peak,
+  })
+  if (!verdict.ok) {
+    log(`rejected (${verdict.rule}): ${JSON.stringify(text)}`)
+    await clearHud({ state: "error", mode, errorText: verdict.reason }, 1800)
+    return
+  }
+
+  if (mode === "dictate") {
+    await inject(verdict.text)
+    await clearHud({ state: "done", mode, transcript: verdict.text }, 1100)
+    return
+  }
+
+  await runCommand(verdict.text)
+}
+
+async function runCommand(phrase: string) {
+  hud({ state: "transcribing", mode: "command", transcript: phrase })
+  const intents = await loadIntents()
+  const threshold = Number(await settingStr("command.threshold", "62")) / 100
+  let match = resolve(phrase, intents, isFinite(threshold) ? threshold : 0.62)
+  let aiRouted: { provider: string } | null = null
+  let aiProposal: any = null
+
+  const assist = await settingStr("ai.assist", "route")
+  const preference = await settingStr("ai.provider", "auto")
+
+  if (!match && assist !== "off") {
+    hud({ state: "transcribing", mode: "command", transcript: phrase, matched: "thinking…" })
+    const routed = await route(phrase, intents, preference)
+    if (routed.result) {
+      const target = intents.find(i => i.id === routed.result!.id)
+      if (target) {
+        const argv = target.run.map(part => part.replace(/\{(\w+)\}/g, (whole, k) =>
+          Object.prototype.hasOwnProperty.call(routed.result!.slots, k)
+            ? routed.result!.slots[k] : whole))
+        match = { intent: target, slots: routed.result.slots, score: 1, argv }
+        aiRouted = { provider: routed.provider ?? "ai" }
+      }
+    }
+  }
+
+  if (!match && assist === "route+plan") {
+    const planned = await plan(phrase, preference)
+    if (planned.refusal) { await clearHud({ state: "error", mode: "command", transcript: phrase, errorText: planned.refusal }, 3600); return }
+    if (planned.result) aiProposal = planned.result
+  }
+
+  if (!match && !aiProposal) {
+    await clearHud({ state: "error", mode: "command", transcript: phrase, errorText: "No command matched" }, 2400)
+    return
+  }
+
+  let target: any = null
+  try { target = await Bun.file(`${STATE}/command-target.json`).json() } catch {}
+
+  const intent = match ? match.intent : {
+    id: "ai.proposed", phrases: [], run: aiProposal.argv,
+    severity: aiProposal.severity === "destructive" ? "destructive" : "normal",
+    description: aiProposal.explanation || "Command proposed by AI",
+    source: aiProposal.provider,
+  }
+
+  Bun.spawn(["bun", `${PLUGIN_DIR}voice/execute.ts`, JSON.stringify({
+    phrase, intent, argv: match ? match.argv : aiProposal.argv,
+    score: match ? match.score : 0,
+    aiProposed: aiProposal ? { provider: aiProposal.provider, explanation: aiProposal.explanation } : null,
+    aiRouted,
+    target: target && target.address
+      ? { address: String(target.address), cls: String(target.class ?? ""), title: String(target.title ?? "") }
+      : null,
+  })], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+}
+
+if (!existsSync(STATE)) mkdirSync(STATE, { recursive: true, mode: 0o700 })
+if (existsSync(SOCK)) await unlink(SOCK).catch(() => {})
+
+Bun.listen({
+  unix: SOCK,
+  socket: {
+    async data(socket, raw) {
+      const [verb, arg] = raw.toString().trim().split(/\s+/, 2)
+      switch (verb) {
+        case "start":
+          if (!recorder.active) {
+            // Capture the focused window at key-DOWN, while the user is still
+            // looking at whatever they are about to talk about.
+            Bun.spawn(["bash", "-c",
+              `hyprctl activewindow -j > '${STATE}/command-target.json' 2>/dev/null || true`],
+              { stdout: "ignore", stderr: "ignore" })
+            recorder.start(arg === "command" ? "command" : "dictate")
+          }
+          break
+        case "stop": await handleStop(); break
+        case "cancel":
+          recorder.cancel()
+          await clearHud({ state: "idle" }, 0)
+          break
+        case "ping": socket.write("ok"); break
+      }
+      socket.end()
+    },
+  },
+})
+
+log(`voice daemon listening on ${SOCK} (stt ${STT})`)

@@ -374,11 +374,11 @@ Panel {
               visible: root.s("voice.sttMode", "local") === "local"
               label: "local model"
               fontFamily: root.fontFamily
-              help: "Bigger is more accurate and slower. base is fastest; small.en is the usual balance."
+              help: "Measured on this class of machine: base.en ~1.0s, small.en ~2.0s per utterance. Bigger is more accurate and slower; medium and above are only sensible with a GPU."
               Dropdown {
                 width: parent.width
                 showLabel: false
-                options: ["base.en", "small.en", "medium.en", "large-v3-turbo"]
+                options: ["tiny.en", "base.en", "small.en", "distil-small.en", "medium.en", "large-v3-turbo"]
                 value: root.s("voice.localModel", "small.en")
                 onChanged: function(v) { root.setCfg("voice.localModel", v) }
               }
