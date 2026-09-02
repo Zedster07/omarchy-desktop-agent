@@ -185,27 +185,19 @@
       "phrases": [
         "open {app}",
         "launch {app}",
-        "start {app}"
+        "start {app}",
+        "open up {app}"
       ],
       "slots": {
         "app": {
-          "type": "enum",
-          "options": [
-            "browser",
-            "terminal",
-            "editor",
-            "files",
-            "music",
-            "settings"
-          ]
+          "type": "text"
         }
       },
       "run": [
-        "omarchy",
-        "launch",
+        "__launch__",
         "{app}"
       ],
-      "description": "Launch an app by role"
+      "description": "Open an installed app or webapp"
     }
   ]
 }

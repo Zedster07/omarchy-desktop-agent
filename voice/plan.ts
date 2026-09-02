@@ -15,7 +15,7 @@
 
 import type { Intent } from "./intents.ts"
 import { ask, pickProvider, extractJson, type Provider } from "./ai.ts"
-import { loadOsCommands, relevantCommands, availableTools } from "./osmap.ts"
+import { loadOsCommands, relevantCommands, availableTools, installedApps } from "./osmap.ts"
 import { checkProposedCommand } from "./safety.ts"
 
 export interface RouteResult { id: string; slots: Record<string, string> }
@@ -91,11 +91,17 @@ ${catalogue}
 
 Other programs installed: ${availableTools().join(", ")}
 
+Apps that can be opened by name (use: uwsm-app -- "<Name>.desktop"):
+${installedApps().join(", ")}
+
 Rules:
 - The command is executed directly as an argv array. There is NO shell, so pipes, redirects, globs, $(...) and ; do not work. Do not use them.
 - Never use sudo, a shell (sh/bash), a package manager, or anything that deletes, moves or overwrites files.
 - Prefer an "omarchy ..." route when one fits. Otherwise use one of the installed programs.
 - To open a web page or play something online, use xdg-open with a full URL.
+- To open an installed app, use uwsm-app with its Desktop Entry ID. Do NOT use
+  "omarchy launch <app>": that route only exists for a fixed handful of names,
+  and inventing one produces a command-not-found.
 
 Request: "${phrase}"
 

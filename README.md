@@ -128,6 +128,24 @@ That accuracy costs about ten seconds on the miss path instead of five, and
 tokens. Set `aiProvider` to `ollama` if you would rather have the speed and
 keep it offline.
 
+## Opening apps
+
+"open whatsapp", "launch gmail", "open google maps" — resolved against the
+`.desktop` entries actually installed on the machine and launched with
+`uwsm-app`, the same way Omarchy's own launchers do, so a voice-started app
+lands in the same systemd slice as a menu-started one.
+
+Webapps come for free: Omarchy installs them AS desktop entries, so WhatsApp,
+Gmail, Discord and the rest are found without special-casing.
+
+Generic words are checked first and mean your configured default:
+`browser`, `terminal`, `editor`, `files` go through `omarchy launch`. That
+ordering matters — "browser" legitimately substring-matches
+*Avahi Zeroconf Browser*, and no scoring can tell those apart, so a role word
+must never reach the app search.
+
+An app that is not installed is refused by name rather than guessed at.
+
 ## Other plugins can be spoken to
 
 There are over two thousand plugins on the marketplace and none of them can be

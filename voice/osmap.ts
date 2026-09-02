@@ -96,6 +96,25 @@ export function relevantCommands(phrase: string, all: OsCommand[], limit = 40): 
   return out
 }
 
+/**
+ * Apps that can actually be opened, by name.
+ *
+ * Without this the model sees `omarchy launch spotify` in the route list,
+ * infers that `omarchy launch <anything>` works, and proposes
+ * `omarchy launch whatsapp` -- which is not a command. Given the real list it
+ * has no reason to invent one.
+ */
+export function installedApps(limit = 60): string[] {
+  try {
+    // Imported lazily: the OS map is also built in contexts with no need to
+    // stat a hundred desktop files.
+    const { listApps } = require("./apps.ts")
+    return listApps().slice(0, limit).map((a: any) => a.name)
+  } catch {
+    return []
+  }
+}
+
 /** Programs the model may use directly, verified present on this machine. */
 export function availableTools(): string[] {
   const wanted = ["xdg-open", "mpv", "yt-dlp", "wpctl", "brightnessctl", "hyprctl",

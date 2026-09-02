@@ -22,6 +22,7 @@ import { resolve } from "./intents.ts"
 import { loadIntents } from "./registry.ts"
 import { route, plan } from "./plan.ts"
 import { setting, settingStr } from "./settings.ts"
+import { resolveTarget, listApps } from "./apps.ts"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
 import { unlink } from "node:fs/promises"
 
@@ -326,6 +327,22 @@ async function runCommand(phrase: string) {
   if (!match && !aiProposal) {
     await clearHud({ state: "error", mode: "command", transcript: phrase, errorText: "No command matched" }, 2400)
     return
+  }
+
+  // __launch__ is a placeholder the registry cannot fill: which argv opens an
+  // app depends on what is installed, so it is resolved here against the real
+  // desktop entries. Refusing beats guessing -- `omarchy launch whatsapp` was
+  // a guess, and it was simply not a command.
+  if (match && match.argv[0] === "__launch__") {
+    const spoken = match.argv.slice(1).join(" ")
+    const t = resolveTarget(spoken)
+    if (!t) {
+      await clearHud({ state: "error", mode: "command", transcript: phrase,
+                       errorText: `No app called "${spoken}"` }, 2600)
+      return
+    }
+    match = { ...match, argv: t.argv,
+              intent: { ...match.intent, description: `Open ${t.name}` } }
   }
 
   let target: any = null
