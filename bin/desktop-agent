@@ -34,15 +34,9 @@ doctor() {
 
   # The hook is what makes spoken commands possible at all. Without it voxtype
   # types every phrase, including the ones meant as commands.
-  # Checked against the config FILE, not `voxtype config` -- that command
-  # prints a resolved summary which omits the post_process section entirely,
-  # so grepping its output reports the hook missing when it is installed.
-  if grep -q "desktop-agent-hook" "$HOME/.config/voxtype/config.toml" 2>/dev/null; then
-    ok "post-process hook installed in voxtype"
-  else
-    bad "voxtype post-process hook not installed  (run: desktop-agent setup)"; missing=1
-  fi
-
+  # Nothing to check in voxtype's config any more. Command mode uses
+  # `voxtype record start --file`, so dictation runs the exact code path it
+  # ran before this plugin existed -- no hook, no post-processor, no tax.
   if [[ -f "$HOME/.config/hypr/bindings.lua" ]] && grep -q "desktop-agent-arm" "$HOME/.config/hypr/bindings.lua" 2>/dev/null; then
     ok "command-mode keybinding present"
   else
@@ -62,41 +56,6 @@ doctor() {
   echo
   [[ $missing -eq 0 ]] && bold "All good." || bold "Run: desktop-agent setup"
   return $missing
-}
-
-# Registers this plugin as voxtype's post-processing command. Voxtype pipes
-# every transcript through it; the wrapper returns dictation untouched and only
-# diverts phrases spoken in command mode. Edits are made in place so the user's
-# own comments and settings survive.
-install_hook() {
-  local cfg="$HOME/.config/voxtype/config.toml"
-  local hook="$PLUGIN_DIR/bin/desktop-agent-hook"
-
-  [[ -f "$cfg" ]] || { bad "no voxtype config at $cfg — run voxtype once first"; return 1; }
-
-  if grep -q "desktop-agent-hook" "$cfg"; then
-    ok "hook already installed"
-    return 0
-  fi
-
-  if grep -qE '^[[:space:]]*command[[:space:]]*=' "$cfg"; then
-    bad "voxtype already has a post_process command; not overwriting it"
-    echo "    Add this manually to [output.post_process] in $cfg:"
-    echo "        command = \"$hook\""
-    return 1
-  fi
-
-  cp "$cfg" "$cfg.bak.$(date +%s)"
-
-  if grep -q '^\[output.post_process\]' "$cfg"; then
-    # Section exists but is commented out or empty — append into it.
-    sed -i "/^\[output.post_process\]/a command = \"$hook\"" "$cfg"
-  else
-    printf '\n[output.post_process]\ncommand = "%s"\ntimeout_ms = 5000\n' "$hook" >> "$cfg"
-  fi
-
-  ok "hook installed into $cfg (backup alongside)"
-  systemctl --user restart voxtype 2>/dev/null || pkill -HUP voxtype 2>/dev/null || true
 }
 
 # Omarchy binds dictation itself (F9 push-to-talk, SUPER+CTRL+X toggle), so
@@ -122,12 +81,10 @@ case "${1:-doctor}" in
   doctor) doctor ;;
   setup)
     have voxtype || { bad "voxtype is not installed"; echo "    omarchy pkg add voxtype-bin"; exit 1; }
-    install_hook
     mkdir -p "$HOME/.config/desktop-agent"
     keybinds
     doctor
     ;;
   keybinds) keybinds ;;
-  hook) install_hook ;;
-  *) echo "usage: desktop-agent [doctor|setup|hook|keybinds]"; exit 2 ;;
+  *) echo "usage: desktop-agent [doctor|setup|keybinds]"; exit 2 ;;
 esac
