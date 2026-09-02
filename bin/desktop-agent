@@ -1,0 +1,120 @@
+#!/usr/bin/env bash
+# Desktop Agent setup and health check.
+#
+# Omarchy never runs an install hook for a plugin, by design -- adding a plugin
+# must not be able to execute anything. So this is explicit and user-invoked:
+# nothing here happens because you installed the plugin, only because you ran
+# this or pressed the button in the panel.
+set -uo pipefail
+
+PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+MODELS="${XDG_DATA_HOME:-$HOME/.local/share}/desktop-agent/models"
+UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
+MODEL="${DESKTOP_AGENT_MODEL:-small}"
+
+bold() { printf '\033[1m%s\033[0m\n' "$*"; }
+ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
+bad()  { printf '  \033[31m✗\033[0m %s\n' "$*"; }
+warn() { printf '  \033[33m!\033[0m %s\n' "$*"; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+doctor() {
+  local missing=0
+  bold "Desktop Agent — health check"
+
+  echo; bold "Voice"
+  for c in pw-record wtype socat wl-copy; do
+    if have "$c"; then ok "$c"; else bad "$c is missing"; missing=1; fi
+  done
+  if have whisper-server; then ok "whisper-server"
+  else bad "whisper-server is missing  (sudo pacman -S whisper-cpp)"; missing=1; fi
+
+  if compgen -G "$MODELS/ggml-*.bin" >/dev/null; then
+    for m in "$MODELS"/ggml-*.bin; do ok "model $(basename "$m") ($(du -h "$m" | cut -f1))"; done
+  else
+    bad "no speech model in $MODELS  (run: desktop-agent setup)"; missing=1
+  fi
+
+  if [[ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock" ]]; then
+    ok "voice daemon running"
+  else
+    warn "voice daemon not running  (systemctl --user start desktop-agent-voice)"
+  fi
+
+  echo; bold "Agent (optional — voice works without this)"
+  if have bun; then ok "bun ($(command -v bun))"; else warn "bun is missing; the MCP half will not run"; fi
+
+  echo; bold "Shell"
+  if qs -p /usr/share/omarchy/shell ipc call io.github.zedster07.desktop-agent status >/dev/null 2>&1; then
+    ok "plugin service is live"
+  else
+    bad "plugin service is not responding — is the plugin enabled in shell.json?"; missing=1
+  fi
+
+  echo
+  [[ $missing -eq 0 ]] && bold "All good." || bold "Run: desktop-agent setup"
+  return $missing
+}
+
+fetch_model() {
+  mkdir -p "$MODELS"
+  local target="$MODELS/ggml-${MODEL}.bin"
+  if [[ -f "$target" ]]; then ok "model ${MODEL} already present"; return 0; fi
+  local url="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-${MODEL}.bin"
+  bold "Downloading the ${MODEL} model (this is the slow part, once)"
+  # -C - resumes a partial download; --fail so a 404 does not leave an HTML
+  # page sitting on disk pretending to be a model.
+  if curl -fL --progress-bar -C - -o "$target.part" "$url"; then
+    mv "$target.part" "$target"
+    ok "model saved to $target"
+  else
+    rm -f "$target.part"
+    bad "download failed"; return 1
+  fi
+}
+
+install_units() {
+  mkdir -p "$UNITS"
+  # bun is frequently installed under a version manager (mise, asdf, nvm), so
+  # its real path is baked in here rather than trusting the systemd user
+  # environment to have inherited a PATH that finds it.
+  local bun_path; bun_path="$(command -v bun || echo /usr/bin/bun)"
+  sed -e "s|^ExecStart=.*voiced.ts|ExecStart=${bun_path} ${PLUGIN_DIR}/voice/voiced.ts|" \
+      "$PLUGIN_DIR/systemd/desktop-agent-voice.service" > "$UNITS/desktop-agent-voice.service"
+  sed -e "s|^Environment=MODEL=.*|Environment=MODEL=${MODELS}/ggml-${MODEL}.bin|" \
+      "$PLUGIN_DIR/systemd/desktop-agent-whisper.service" > "$UNITS/desktop-agent-whisper.service"
+  systemctl --user daemon-reload
+  ok "units written to $UNITS"
+}
+
+keybinds() {
+  cat <<'BINDS'
+
+Add to ~/.config/hypr/bindings.conf (hold to talk, release to insert):
+
+    bind  = SUPER, D, exec, desktop-voice start dictate
+    bindr = SUPER, D, exec, desktop-voice stop
+    bind  = SUPER SHIFT, D, exec, desktop-voice start command
+    bindr = SUPER SHIFT, D, exec, desktop-voice stop
+
+BINDS
+}
+
+case "${1:-doctor}" in
+  doctor) doctor ;;
+  setup)
+    if ! have whisper-server; then
+      bold "whisper-cpp is not installed. Run this, then re-run setup:"
+      echo "    sudo pacman -S whisper-cpp"
+      exit 1
+    fi
+    fetch_model || exit 1
+    install_units
+    systemctl --user enable --now desktop-agent-whisper.service desktop-agent-voice.service
+    keybinds
+    doctor
+    ;;
+  keybinds) keybinds ;;
+  *) echo "usage: desktop-agent [doctor|setup|keybinds]"; exit 2 ;;
+esac

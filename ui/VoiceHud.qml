@@ -3,7 +3,7 @@ import Quickshell
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
-import ".."
+import "."
 
 // The thing you actually look at while dictating.
 //
@@ -19,7 +19,9 @@ Item {
   id: root
 
   // idle | listening | transcribing | preview | done | error
-  property string state: "idle"
+  // Named "phase", not "state": Item already defines a string `state` for QML
+  // state machines, and redeclaring it is a load-time error.
+  property string phase: "idle"
   // dictate | command
   property string mode: "dictate"
   property string transcript: ""
@@ -34,9 +36,9 @@ Item {
   signal commit()
   signal discard()
 
-  readonly property bool active: state !== "idle"
-  readonly property bool listening: state === "listening"
-  readonly property bool failed: state === "error"
+  readonly property bool active: phase !== "idle"
+  readonly property bool listening: phase === "listening"
+  readonly property bool failed: phase === "error"
   readonly property bool commanding: mode === "command"
 
   readonly property color tone: failed ? Theme.danger
@@ -45,17 +47,17 @@ Item {
 
   readonly property string glyph: {
     if (failed) return "󰍭"
-    if (state === "transcribing") return "󰔟"
-    if (state === "done") return "󰄬"
+    if (phase === "transcribing") return "󰔟"
+    if (phase === "done") return "󰄬"
     return commanding ? "󰘳" : "󰍬"
   }
 
   readonly property string caption: {
     if (failed) return errorText !== "" ? errorText : "Didn't catch that"
-    if (state === "listening") return commanding ? "Listening for a command" : "Listening"
-    if (state === "transcribing") return "Transcribing"
-    if (state === "preview") return "Enter to insert · Esc to discard"
-    if (state === "done") return commanding && matchedIntent !== "" ? matchedIntent : "Inserted"
+    if (phase === "listening") return commanding ? "Listening for a command" : "Listening"
+    if (phase === "transcribing") return "Transcribing"
+    if (phase === "preview") return "Enter to insert · Esc to discard"
+    if (phase === "done") return commanding && matchedIntent !== "" ? matchedIntent : "Inserted"
     return ""
   }
 
@@ -70,7 +72,7 @@ Item {
     WlrLayershell.layer: WlrLayer.Overlay
     // Focus only where it is actually needed. Everywhere else this is a
     // read-only readout and must not intercept a keystroke.
-    WlrLayershell.keyboardFocus: root.state === "preview"
+    WlrLayershell.keyboardFocus: root.phase === "preview"
       ? WlrKeyboardFocus.Exclusive
       : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
@@ -129,7 +131,7 @@ Item {
             font.pixelSize: Style.font.icon
 
             RotationAnimator on rotation {
-              running: root.state === "transcribing"
+              running: root.phase === "transcribing"
               loops: Animation.Infinite
               from: 0; to: 360; duration: 1400
             }
@@ -211,9 +213,9 @@ Item {
 
     Item {
       anchors.fill: parent
-      focus: root.state === "preview"
+      focus: root.phase === "preview"
       Keys.onPressed: function(event) {
-        if (root.state !== "preview") return
+        if (root.phase !== "preview") return
         if (event.key === Qt.Key_Return || event.key === Qt.Key_Enter) { root.commit(); event.accepted = true }
         else if (event.key === Qt.Key_Escape) { root.discard(); event.accepted = true }
       }
