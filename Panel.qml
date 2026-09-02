@@ -69,6 +69,28 @@ Panel {
 
   property bool applyAfterSet: false
 
+  // ---- local-install gate
+  //
+  // Choosing "local" does not switch anything by itself. It asks first, with
+  // the real number, and only downloads on an explicit yes. The default is
+  // remote precisely so nobody pays ~900 MB they did not ask for.
+  property var pendingLocal: null       // { venvMb, modelMb, model }
+  property string installLine: ""
+  property bool installing: false
+
+  function askForLocal(model) {
+    costProc.command = ["desktop-agent-config", "local-cost", model]
+    costProc.running = true
+  }
+  function confirmLocal() {
+    if (!pendingLocal) return
+    root.installing = true
+    root.installLine = "starting…"
+    installProc.command = ["desktop-agent-config", "install-local", String(pendingLocal.model)]
+    installProc.running = true
+  }
+  function cancelLocal() { root.pendingLocal = null; root.installLine = "" }
+
   function applyStt() {
     root.busy = "stt"
     applyProc.running = true
@@ -138,6 +160,32 @@ Panel {
   Process { id: applyProc; command: ["desktop-agent-config", "apply-stt"]; onExited: { root.busy = ""; cfgProc.running = true } }
   Process { id: secretProc; onExited: { cfgProc.running = true; root.applyStt() } }
   Process { id: openProc }
+
+  Process {
+    id: costProc
+    stdout: SplitParser {
+      onRead: function(line) {
+        try {
+          var c = JSON.parse(String(line))
+          // Nothing to download means nothing to ask about.
+          if (c.venvMb + c.modelMb === 0) root.setCfg("voice.sttMode", "local")
+          else root.pendingLocal = c
+        } catch (e) { console.warn("desktop-agent: bad cost json") }
+      }
+    }
+  }
+
+  Process {
+    id: installProc
+    stdout: SplitParser { onRead: function(line) { root.installLine = String(line).trim() } }
+    onExited: function(code) {
+      root.installing = false
+      if (root.installLine.indexOf("failed") === 0) return   // leave the reason on screen
+      root.pendingLocal = null
+      root.installLine = ""
+      cfgProc.running = true
+    }
+  }
 
   Component.onCompleted: refresh()
 
@@ -357,21 +405,95 @@ Panel {
               width: parent.width
               label: "speech engine"
               fontFamily: root.fontFamily
-              help: root.s("voice.sttMode", "local") === "remote"
+              help: root.s("voice.sttMode", "remote") === "remote"
                 ? "Audio is sent to the endpoint below. Faster and markedly more accurate than anything local on modest hardware — and it leaves the machine."
                 : "Runs entirely on this machine. Nothing leaves it."
               Dropdown {
                 width: parent.width
                 showLabel: false
-                options: ["local", "remote"]
-                value: root.s("voice.sttMode", "local")
-                onChanged: function(v) { root.setCfg("voice.sttMode", v) }
+                options: ["remote", "local"]
+                value: root.s("voice.sttMode", "remote")
+                onChanged: function(v) {
+                  if (v === "local") root.askForLocal(root.s("voice.localModel", "small.en"))
+                  else root.setCfg("voice.sttMode", v)
+                }
+              }
+            }
+
+            // ---- download consent
+            Item {
+              width: parent.width
+              visible: root.pendingLocal !== null
+              height: consent.implicitHeight + Style.spacing.xxl * 2
+
+              Rectangle {
+                anchors.fill: parent
+                radius: Style.cornerRadius
+                color: Util.alpha(Theme.caution, 0.07)
+              }
+              HudFrame { anchors.fill: parent; color: Theme.caution; armRatio: 0.05 }
+
+              Column {
+                id: consent
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.verticalCenter: parent.verticalCenter
+                anchors.margins: Style.spacing.xxl
+                spacing: Style.spacing.md
+
+                HudLabel { text: "local transcription needs a download"; tone: Theme.caution; color: Theme.caution }
+
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  color: Util.alpha(Color.foreground, 0.8)
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  text: {
+                    if (!root.pendingLocal) return ""
+                    var v = root.pendingLocal.venvMb, m = root.pendingLocal.modelMb
+                    var bits = []
+                    if (v > 0) bits.push("speech packages " + v + " MB")
+                    if (m > 0) bits.push("model " + root.pendingLocal.model + " " + m + " MB")
+                    return bits.join("  ·  ") + "   —   " + (v + m) + " MB total, kept on this machine."
+                  }
+                }
+
+                Text {
+                  width: parent.width
+                  wrapMode: Text.WordWrap
+                  visible: root.installLine !== ""
+                  text: root.installLine
+                  color: root.installLine.indexOf("failed") === 0 ? Theme.danger : Theme.ok
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.caption
+                }
+
+                Row {
+                  spacing: Style.spacing.controlGap
+                  visible: !root.installing
+
+                  Button {
+                    text: "Download and switch"
+                    foreground: Theme.caution; accent: Theme.caution
+                    bordered: true; focusable: true
+                    fontSize: Style.font.bodySmall
+                    onClicked: root.confirmLocal()
+                  }
+                  Button {
+                    text: "Stay on remote"
+                    foreground: Color.foreground
+                    focusable: true
+                    fontSize: Style.font.bodySmall
+                    onClicked: root.cancelLocal()
+                  }
+                }
               }
             }
 
             SettingRow {
               width: parent.width
-              visible: root.s("voice.sttMode", "local") === "local"
+              visible: root.s("voice.sttMode", "remote") === "local"
               label: "local model"
               fontFamily: root.fontFamily
               help: "Measured on this class of machine: base.en ~1.0s, small.en ~2.0s per utterance. Bigger is more accurate and slower; medium and above are only sensible with a GPU."
@@ -386,10 +508,10 @@ Panel {
 
             SettingRow {
               width: parent.width
-              visible: root.s("voice.sttMode", "local") === "remote"
+              visible: root.s("voice.sttMode", "remote") === "remote"
               label: "remote model"
               fontFamily: root.fontFamily
-              help: "whisper-large-v3-turbo on Groq is the same model good cloud dictation uses."
+              help: "whisper-large-v3-turbo on Groq. Nothing to download, and markedly more accurate than a local model on modest hardware."
               Dropdown {
                 width: parent.width
                 showLabel: false
@@ -401,10 +523,10 @@ Panel {
 
             SettingRow {
               width: parent.width
-              visible: root.s("voice.sttMode", "local") === "remote"
+              visible: root.s("voice.sttMode", "remote") === "remote"
               label: root.s("voice.hasRemoteKey", false) ? "api key — set" : "api key — not set"
               fontFamily: root.fontFamily
-              help: "Stored where voxtype reads it, mode 0600, and never shown again. Get one at console.groq.com."
+              help: "Stored at ~/.config/desktop-agent/stt.key, mode 0600 from the moment it is created, and never shown again. Free key at console.groq.com."
               Row {
                 width: parent.width
                 spacing: Style.spacing.controlGap

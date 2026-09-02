@@ -137,44 +137,41 @@ case "${1:-doctor}" in
   doctor) doctor ;;
   setup)
     mkdir -p "$HOME/.config/desktop-agent" "$UNITS"
-    local mode; mode="$(desktop-agent-config get voice.sttMode 2>/dev/null || echo local)"
-    local bun_path; bun_path="$(command -v bun || echo /usr/bin/bun)"
-
-    # The voice daemon is always needed. The speech SERVICE is only needed for
-    # local transcription -- a cloud endpoint is an HTTP call the daemon makes
-    # itself, so remote users install nothing beyond the plugin and bun.
+    bun_path="$(command -v bun || echo /usr/bin/bun)"
     sed -e "s|ExecStart=.*voiced.ts|ExecStart=$bun_path $PLUGIN_DIR/voice/voiced.ts|" \
         "$PLUGIN_DIR/systemd/desktop-agent-voice.service" > "$UNITS/desktop-agent-voice.service"
+    systemctl --user daemon-reload
+    systemctl --user enable --now desktop-agent-voice.service
+    ok "voice daemon started"
 
-    if [[ "$mode" == "remote" ]]; then
-      ok "remote transcription — no local model needed"
-      systemctl --user daemon-reload
-      systemctl --user enable --now desktop-agent-voice.service
-      systemctl --user disable --now desktop-agent-stt.service 2>/dev/null
-      if ! desktop-agent-config all 2>/dev/null | grep -q '"hasRemoteKey": true'; then
-        warn "no API key set yet — add one in the panel's voice tab"
-      fi
+    # Nothing is downloaded here. Transcription defaults to a cloud endpoint,
+    # which needs a key and no disk; local is offered in the panel and only
+    # installs after an explicit yes with the size on screen.
+    if desktop-agent-config all 2>/dev/null | grep -q '"hasRemoteKey": true'; then
+      ok "API key set — transcription ready"
     else
-      local venv="$HOME/.local/share/desktop-agent/venv"
-      if [[ ! -x "$venv/bin/python" ]]; then
-        bold "Creating the speech environment (~430 MB, once)"
-        python3 -m venv "$venv" || { bad "could not create a venv"; exit 1; }
-      fi
-      if ! "$venv/bin/python" -c "import faster_whisper" 2>/dev/null; then
-        bold "Installing faster-whisper"
-        "$venv/bin/pip" install --quiet --upgrade pip
-        "$venv/bin/pip" install faster-whisper || { bad "install failed"; exit 1; }
-      fi
-      ok "speech environment ready"
-      sed -e "s|ExecStart=%h/.local/share/desktop-agent/venv/bin/python .*|ExecStart=$venv/bin/python $PLUGIN_DIR/stt/server.py|" \
-          "$PLUGIN_DIR/systemd/desktop-agent-stt.service" > "$UNITS/desktop-agent-stt.service"
-      systemctl --user daemon-reload
-      systemctl --user enable --now desktop-agent-stt.service desktop-agent-voice.service
-      ok "services started (the model downloads on first use)"
+      echo
+      bold "One thing left: an API key"
+      echo "  Transcription runs against a cloud endpoint by default, so there is"
+      echo "  nothing to download. Get a free key at https://console.groq.com and"
+      echo "  paste it into the panel's voice tab."
+      echo
+      echo "  Prefer to keep audio on this machine? Pick 'local' in the same tab."
+      echo "  It will tell you the download size and ask before fetching anything."
     fi
 
     keybinds
     doctor
+    ;;
+  install-stt-unit)
+    # Called by desktop-agent-config when someone opts into local. The unit is
+    # not installed at plugin-install time because most users will never run a
+    # local model.
+    mkdir -p "$UNITS"
+    venv="$HOME/.local/share/desktop-agent/venv"
+    sed -e "s|ExecStart=%h/.local/share/desktop-agent/venv/bin/python .*|ExecStart=$venv/bin/python $PLUGIN_DIR/stt/server.py|" \
+        "$PLUGIN_DIR/systemd/desktop-agent-stt.service" > "$UNITS/desktop-agent-stt.service"
+    systemctl --user daemon-reload
     ;;
   keybinds) keybinds ;;
   *) echo "usage: desktop-agent [doctor|setup|keybinds]"; exit 2 ;;

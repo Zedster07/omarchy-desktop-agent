@@ -34,14 +34,33 @@ key, no account. If you are running Omarchy, the speech half is already there.
 ## The speech stack
 
 This plugin owns the whole speech path: capture, VAD, transcription,
-filtering, injection. It does not drive an external dictation tool.
+filtering, injection.
 
-That was not the original plan. The first version wrapped Omarchy's bundled
-voxtype, on the reasoning that a plugin should not reinvent something shipping
-with the OS. Three things changed the calculation: voxtype's released build
-accepts a remote-transcription config and silently ignores it, it exposes no
-vocabulary biasing, and integrating with it meant a result file plus a status
-stream — three separate bugs came out of that seam alone.
+**Transcription is remote by default and downloads nothing.** A free Groq key
+gets you `whisper-large-v3-turbo` — a far larger model than anything that
+runs comfortably on a laptop CPU, with no install and no disk cost. Paste the
+key into the panel's voice tab and it works.
+
+**Local is one dropdown away, and it asks first.** Choosing it shows exactly
+what will be downloaded before anything happens:
+
+```
+local transcription needs a download
+speech packages 432 MB  ·  model small.en 464 MB  —  896 MB total,
+kept on this machine.
+       [ Download and switch ]   [ Stay on remote ]
+```
+
+Nothing is fetched without that yes, and the numbers are measured rather than
+guessed. Already have the packages? It only counts the model.
+
+### Why not the dictation tool that ships with Omarchy
+
+The first version wrapped voxtype, on the reasoning that a plugin should not
+reinvent something shipping with the OS. Three things changed that: voxtype's
+released build accepts a remote-transcription config and silently ignores it,
+it exposes no vocabulary biasing, and integrating through a result file plus a
+status stream produced three separate bugs in that seam alone.
 
 The deciding number was the runtime. Same machine, same 5s clip:
 
@@ -51,23 +70,16 @@ The deciding number was the runtime. Same machine, same 5s clip:
 | faster-whisper `small.en`, CPU int8 | **2.02s** |
 | whisper.cpp (voxtype) on the Vulkan iGPU | 13.06s |
 
-CTranslate2 is simply a better runtime than whisper.cpp here: `small.en` on
-plain CPU beats whisper.cpp on the GPU by six times, and is the more accurate
+CTranslate2 beats whisper.cpp six times over here, on the CPU, with the larger
 model. Owning the pipeline turned out to be less code than working around not
 owning it.
 
-`stt/server.py` keeps a model warm and answers `POST /transcribe`. Two
-backends behind one interface:
+### What makes the transcript trustworthy
 
-- **local** — faster-whisper, int8, nothing leaves the machine.
-- **remote** — any OpenAI-compatible endpoint. Groq's `whisper-large-v3-turbo`
-  is the useful one: a far larger model, no local compute, and your audio
-  leaves the machine. Off unless you choose it and add a key.
-
-Everything that makes whisper trustworthy lives in that service, not in the
-caller: VAD **before** decode, forced language, temperature 0, no conditioning
-on previous text, and per-segment confidence thresholds. A decoder handed
-silence writes plausible sentences, so the silence never reaches it.
+Both paths apply the same discipline: VAD **before** decode, forced language,
+temperature 0, no conditioning on previous text, and per-segment confidence
+thresholds. A decoder handed silence writes plausible sentences, so the
+silence never reaches it.
 
 ## The action space is a registry, not a prompt
 
@@ -231,10 +243,10 @@ this identically, gradients included.
 
 `pw-record` (pipewire), `wtype`, `socat`, `wl-clipboard`, `python3`, `bun`.
 
-`desktop-agent setup` creates a virtualenv under
-`~/.local/share/desktop-agent/` and installs faster-whisper into it — about
-430 MB, plus the model on first run. Nothing is installed system-wide and
-voxtype is not required.
+Nothing else by default. Choosing local transcription later creates a
+virtualenv under `~/.local/share/desktop-agent/` and installs faster-whisper
+into it (432 MB plus the model) — but only after the panel has shown you the
+size and you have said yes. Nothing is installed system-wide.
 
 ## Licence
 

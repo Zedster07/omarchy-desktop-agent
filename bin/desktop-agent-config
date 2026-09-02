@@ -34,7 +34,8 @@ UNIT = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"),
 
 DEFAULTS = {
     "voice": {
-        "sttMode": "local",                 # local | remote
+        "sttMode": "remote",                # remote | local. Remote is the
+                                            # default: it needs no download.
         "localModel": "small.en",
         "remoteEndpoint": "https://api.groq.com/openai/v1/audio/transcriptions",
         "remoteModel": "whisper-large-v3-turbo",
@@ -49,6 +50,15 @@ DEFAULTS = {
 # Spoken words this machine actually needs to get right. Same idea as
 # ai-coworker's sttPrompt(): tell whisper what to EXPECT, because a decoder with
 # no expectations turns "open" into "hope" and "CTA" into "seat A".
+# Measured, not estimated. The venv is faster-whisper plus its dependencies
+# (ctranslate2, onnxruntime, tokenizers, av); the model downloads on first use.
+# A prompt that says "some disk space" is not consent.
+VENV_MB = 432
+MODEL_MB = {
+    "tiny.en": 45, "base.en": 141, "base": 142, "small.en": 464,
+    "distil-small.en": 250, "medium.en": 1500, "large-v3-turbo": 810,
+}
+
 BIAS_PROMPT = ("Commands: open, close, launch, workspace, volume, mute, unmute, "
                "lock screen, fullscreen, screenshot, theme, brightness, play, "
                "YouTube, Chrome, Firefox, terminal, browser, editor, files.")
@@ -140,6 +150,77 @@ def apply_stt():
     return 0
 
 
+VENV = os.path.join(os.environ.get("XDG_DATA_HOME", f"{HOME}/.local/share"),
+                    "desktop-agent", "venv")
+
+
+def local_ready():
+    """Is local transcription actually usable right now?"""
+    py = os.path.join(VENV, "bin", "python")
+    if not os.access(py, os.X_OK):
+        return False
+    r = subprocess.run([py, "-c", "import faster_whisper"], capture_output=True)
+    return r.returncode == 0
+
+
+def local_cost(model):
+    """What switching to local would actually download, in MB."""
+    have_venv = local_ready()
+    hub = os.path.join(os.environ.get("XDG_CACHE_HOME", f"{HOME}/.cache"),
+                       "huggingface", "hub")
+    slug = f"models--Systran--faster-whisper-{model}"
+    have_model = os.path.isdir(os.path.join(hub, slug))
+    return {
+        "venvMb": 0 if have_venv else VENV_MB,
+        "modelMb": 0 if have_model else MODEL_MB.get(model, 500),
+        "haveVenv": have_venv,
+        "haveModel": have_model,
+        "model": model,
+    }
+
+
+def install_local(model):
+    """Build the local speech environment. Prints progress lines for the panel."""
+    py = os.path.join(VENV, "bin", "python")
+    if not os.access(py, os.X_OK):
+        print("creating environment", flush=True)
+        r = subprocess.run([sys.executable, "-m", "venv", VENV], capture_output=True)
+        if r.returncode != 0:
+            print("failed: could not create a virtualenv", flush=True)
+            return 1
+
+    if not local_ready():
+        print("downloading packages (~432 MB)", flush=True)
+        r = subprocess.run([os.path.join(VENV, "bin", "pip"), "install", "--quiet",
+                            "--disable-pip-version-check", "faster-whisper"],
+                           capture_output=True, text=True)
+        if r.returncode != 0:
+            print(f"failed: {r.stderr.strip()[:160]}", flush=True)
+            return 1
+
+    mb = MODEL_MB.get(model, 500)
+    print(f"downloading model {model} (~{mb} MB)", flush=True)
+    code = ("from faster_whisper import WhisperModel;"
+            f"WhisperModel({model!r}, device='cpu', compute_type='int8')")
+    r = subprocess.run([py, "-c", code], capture_output=True, text=True)
+    if r.returncode != 0:
+        print(f"failed: {r.stderr.strip()[-160:]}", flush=True)
+        return 1
+
+    d = load()
+    d.setdefault("voice", {})["sttMode"] = "local"
+    d["voice"]["localModel"] = model
+    save(d)
+
+    # The service only exists for local transcription, so it is installed at
+    # the moment local is chosen rather than at plugin install time.
+    subprocess.run(["desktop-agent", "install-stt-unit"], capture_output=True)
+    subprocess.run(["systemctl", "--user", "enable", "--now",
+                    "desktop-agent-stt.service"], capture_output=True)
+    print("ready", flush=True)
+    return 0
+
+
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "all"
 
@@ -200,6 +281,15 @@ def main(argv):
 
     if cmd == "apply-stt":
         return apply_stt()
+
+    if cmd == "local-cost":
+        print(json.dumps(local_cost(argv[2] if len(argv) > 2 else
+                                    load()["voice"].get("localModel", "small.en"))))
+        return 0
+
+    if cmd == "install-local":
+        return install_local(argv[2] if len(argv) > 2 else
+                             load()["voice"].get("localModel", "small.en"))
 
     if cmd == "stt-status":
         import urllib.request
