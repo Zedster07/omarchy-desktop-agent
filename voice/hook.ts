@@ -52,8 +52,19 @@ if (!commandModeArmed()) {
   process.exit(0)
 }
 
+// The hook cannot sleep before exiting -- voxtype is waiting on stdout -- so
+// a terminal state here is cleared by a detached sleeper instead. The shell
+// also runs its own watchdog, so a failure to spawn this still recovers.
+function flash(patch: Record<string, unknown>, holdMs = 1800) {
+  hud(patch)
+  Bun.spawn(["bash", "-c",
+    `sleep ${(holdMs / 1000).toFixed(1)}; exec qs -p /usr/share/omarchy/shell ipc call ` +
+    `io.github.zedster07.desktop-agent voice '{"state":"idle","transcript":"","errorText":""}'`],
+    { stdout: "ignore", stderr: "ignore", stdin: "ignore" }).unref?.()
+}
+
 if (phrase === "") {
-  hud({ state: "error", mode: "command", errorText: "Nothing was said" })
+  flash({ state: "error", mode: "command", errorText: "Nothing was said" })
   process.exit(0)
 }
 
@@ -64,7 +75,8 @@ if (!match) {
   // Deliberately not a guess and deliberately not typed. An unrecognised
   // command that silently becomes text in whatever window had focus is how
   // you end up with "lock screen" in a commit message.
-  hud({ state: "error", mode: "command", transcript: phrase, errorText: "No command matched" })
+  flash({ state: "error", mode: "command", transcript: phrase,
+          errorText: "No command matched" }, 2200)
   process.exit(0)
 }
 

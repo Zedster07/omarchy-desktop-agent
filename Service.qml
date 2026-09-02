@@ -192,6 +192,47 @@ Item {
 
   // --------------------------------------------------------------- voice
 
+  // Watchdog for the voice HUD.
+  //
+  // The HUD is driven entirely by an external process, so every state it can
+  // be left in has to time out on its own. Without this, a helper that is
+  // killed -- or that exits on an error path before clearing up -- leaves a
+  // card floating over the desktop with no way to dismiss it, which is exactly
+  // what happened the first time an approval was cancelled out from under the
+  // executor. Nothing outside the shell can be trusted to clean up after
+  // itself, so the shell does it.
+  //
+  // Budgets are per state: listening lasts as long as a key is held, so it
+  // gets voxtype's own recording ceiling plus slack; the terminal states are
+  // just long enough to read.
+  readonly property int voiceBudgetMs: {
+    if (root.voiceState === "listening") return 90000
+    if (root.voiceState === "transcribing") return 30000
+    if (root.voiceState === "preview") return 60000
+    if (root.voiceState === "done" || root.voiceState === "error") return 6000
+    return 0
+  }
+
+  Timer {
+    id: voiceWatchdog
+    interval: root.voiceBudgetMs > 0 ? root.voiceBudgetMs : 1000
+    repeat: false
+    running: root.voiceBudgetMs > 0
+    onTriggered: {
+      root.log("voice HUD stuck in '" + root.voiceState + "', clearing")
+      root.resetVoice()
+    }
+  }
+
+  function resetVoice() {
+    root.voiceState = "idle"
+    root.voiceTranscript = ""
+    root.voiceError = ""
+    root.voiceMatched = ""
+    root.voiceLevels = []
+    root.voiceElapsed = 0
+  }
+
   function applyVoice(patch) {
     var p
     try { p = JSON.parse(patch) } catch (e) { return }
@@ -202,6 +243,7 @@ Item {
     if ("matched" in p) root.voiceMatched = String(p.matched)
     if ("elapsed" in p) root.voiceElapsed = Number(p.elapsed) || 0
     if ("levels" in p && Array.isArray(p.levels)) root.voiceLevels = p.levels
+    voiceWatchdog.restart()
   }
 
   function voiceSend(verb) {
@@ -348,6 +390,9 @@ Item {
 
     // Pushed by the voice daemon on every state change.
     function voice(payload: string): void { root.applyVoice(payload) }
+
+    // Manual escape hatch, for the case the watchdog has not fired yet.
+    function voiceReset(): void { root.resetVoice() }
 
     // A spoken phrase that command mode resolved. Intent matching and the
     // policy gate land here in the next step; for now it is surfaced so the

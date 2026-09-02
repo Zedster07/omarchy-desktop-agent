@@ -30,6 +30,21 @@ function hud(patch: Record<string, unknown>) {
             { stdout: "ignore", stderr: "ignore" })
 }
 
+// Every exit from this process goes through here.
+//
+// process.exit() kills pending timers, so an earlier version that did
+//   hud({ state: "error" }); process.exit(0)
+// left the card on screen permanently -- there was no longer a process alive
+// to clear it. Showing the outcome and then clearing it has to be one
+// operation, and it has to be awaited.
+async function finish(patch: Record<string, unknown>, holdMs = 1600): Promise<never> {
+  hud(patch)
+  await Bun.sleep(holdMs)
+  hud({ state: "idle", transcript: "", errorText: "", matched: "" })
+  await Bun.sleep(120)
+  process.exit(0)
+}
+
 async function ipc(fn: string, arg: string): Promise<string> {
   const p = Bun.spawn([...SHELL_IPC, fn, arg], { stdout: "pipe", stderr: "ignore" })
   return (await new Response(p.stdout).text()).trim()
@@ -73,8 +88,7 @@ if (needsApproval) {
 
   if (!id) {
     audit(`${intent.id} -> could not raise an approval, refusing`)
-    hud({ state: "error", errorText: "Could not ask for approval" })
-    process.exit(1)
+    await finish({ state: "error", errorText: "Could not ask for approval" }, 2400)
   }
 
   // Poll until answered. Two minutes of silence is a denial, matching the
@@ -89,8 +103,7 @@ if (needsApproval) {
 
   if (verdict !== "allow" && verdict !== "always") {
     audit(`${intent.id} cmd:${argv.join(" ")} -> denied (${verdict || "timeout"})`)
-    hud({ state: "error", errorText: "Denied" })
-    process.exit(0)
+    await finish({ state: "error", errorText: verdict === "gone" ? "Cancelled" : "Denied" }, 1400)
   }
 }
 
@@ -99,12 +112,11 @@ const code = await proc.exited
 
 if (code === 0) {
   audit(`${intent.id} cmd:${argv.join(" ")} -> ok`)
-  hud({ state: "done", mode: "command", transcript: phrase,
-        matched: intent.description || intent.id })
+  await finish({ state: "done", mode: "command", transcript: phrase,
+                 matched: intent.description || intent.id })
 } else {
   const err = (await new Response(proc.stderr).text()).trim().split("\n")[0] ?? ""
   audit(`${intent.id} cmd:${argv.join(" ")} -> failed (${code}) ${err}`)
-  hud({ state: "error", mode: "command", errorText: err || `Command failed (${code})` })
+  await finish({ state: "error", mode: "command",
+                 errorText: err || `Command failed (${code})` }, 2600)
 }
-
-setTimeout(() => hud({ state: "idle" }), 1600)
