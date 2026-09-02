@@ -39,7 +39,10 @@ export async function overlayReady(target: string): Promise<boolean> {
   } catch { return false }
 }
 
-function taskPrompt(phrase: string): string {
+function taskPrompt(phrase: string, workspace: number): string {
+  const placement = workspace > 0
+    ? `\n- Anything you OPEN must go to workspace ${workspace}, so it does not land in the middle of what the person is doing. Launch with:\n    hyprctl dispatch 'hl.dsp.exec_cmd("[workspace ${workspace} silent] <command>")'\n  "silent" places the window there without moving their focus. Do not switch workspaces yourself.`
+    : ""
   return `You are driving a Linux desktop on behalf of someone who spoke this request out loud:
 
 "${phrase}"
@@ -57,7 +60,7 @@ How to work here:
   If one is denied, stop and report it rather than looking for another way
   around: a refusal is an answer.
 - Stop when the request is done. Do not continue into related work nobody asked
-  for.
+  for.${placement}
 
 Reply with ONE short sentence describing what you actually did, in the past
 tense. No preamble, no markdown.`
@@ -70,15 +73,16 @@ tense. No preamble, no markdown.`
  */
 export async function handOff(
   phrase: string,
-  opts: { timeoutMs?: number; onProgress?: (s: string) => void } = {},
+  opts: { timeoutMs?: number; workspace?: number; onProgress?: (s: string) => void } = {},
 ): Promise<AgentOutcome> {
   const timeoutMs = opts.timeoutMs ?? 300_000
+  const workspace = opts.workspace ?? 10
   if (!Bun.which("claude")) {
     return { ok: false, summary: "No agent CLI installed" }
   }
 
   const proc = Bun.spawn([
-    "claude", "-p", taskPrompt(phrase),
+    "claude", "-p", taskPrompt(phrase, workspace),
     "--allowedTools", "mcp__desktop__*",
     "--permission-mode", "bypassPermissions",
   ], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })

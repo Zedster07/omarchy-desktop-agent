@@ -8,6 +8,7 @@
 import { settingStr } from "./settings.ts"
 import type { Intent } from "./intents.ts"
 import { appendFileSync, mkdirSync } from "node:fs"
+import { onWorkspace, isLaunch, DEFAULT_WORKSPACE } from "./workspace.ts"
 
 const HOME = process.env.HOME!
 const AUDIT = `${HOME}/.local/share/desktop-agent/desktop.log`
@@ -190,6 +191,17 @@ if (needsApproval) {
     audit(`${intent.id} cmd:${argv.join(" ")} -> denied (${verdict || "timeout"})`)
     await finish({ state: "error", errorText: verdict === "gone" ? "Cancelled" : "Denied" }, 1400)
   }
+}
+
+// Anything that opens a window goes to the agent's own workspace, so a task
+// running in the background cannot drop a window into the middle of what the
+// user is doing. `silent` places it without moving their focus.
+//
+// Only launches are moved: "close this window" and "volume 40" are about where
+// the user already is, and relocating those would be actively wrong.
+const agentWs = Number(await settingStr("agent.workspace", String(DEFAULT_WORKSPACE)))
+for (let i = 0; i < plan.length; i++) {
+  if (isLaunch(plan[i])) plan[i] = onWorkspace(plan[i], agentWs)
 }
 
 // Run the plan in order, stopping at the first failure.

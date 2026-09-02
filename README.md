@@ -190,6 +190,30 @@ becomes voice-controllable, without knowing this plugin exists.
 Sources are **approved once** before their intents go live. Installing a plugin
 must not silently extend what your microphone can do to your machine.
 
+## The agent stays out of your way
+
+Anything the agent opens lands on **workspace 10** by default, placed with
+Hyprland's `silent` rule so the window appears there without your focus
+moving. Change it in the panel's ai tab; set it to 0 to let things open
+wherever they like.
+
+Only launches are relocated. "close this window", "volume 40" and
+"workspace three" are about where you already are, and moving those would be
+actively wrong.
+
+This is **placement, not permission**. What the agent may touch is the
+policy's `workspaces` dimension, and the two are separate on purpose —
+confining new windows is a courtesy, and a courtesy is not a boundary. For
+real confinement, say so in the policy:
+
+```jsonc
+"workspaces": {
+  "*": "deny",          // nothing outside the agent's own workspace
+  "10": "allow",
+  "special:*": "deny"   // scratchpads stay private
+}
+```
+
 ## Nothing irreversible happens quietly
 
 Intents can be marked `destructive`. Those always raise the approval overlay —

@@ -42,7 +42,11 @@ DEFAULTS = {
         "biasPrompt": True,
     },
     "ai": {"assist": "route", "provider": "auto", "localModel": "llama3.2:3b"},
-    "agent": {"overlayTarget": "io.github.zedster07.desktop-agent"},
+    "agent": {
+        "overlayTarget": "io.github.zedster07.desktop-agent",
+        # Anything the agent opens lands here. 0 disables confinement.
+        "workspace": 10,
+    },
     "command": {"enabled": True, "confirm": "destructive-only",
                 "thirdParty": True, "threshold": 62},
     "policy": {"leaseMaxMinutes": 60, "recap": True, "recapIdleSec": 20},

@@ -349,6 +349,7 @@ async function runCommand(phrase: string) {
           matched: "handing to the agent…" })
     const t0 = Date.now()
     const res = await handOff(phrase, {
+      workspace: Number(await settingStr("agent.workspace", "10")),
       onProgress: () => hud({ state: "transcribing", mode: "command", transcript: phrase,
                               matched: `agent working · ${Math.round((Date.now() - t0) / 1000)}s` }),
     })

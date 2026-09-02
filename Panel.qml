@@ -668,6 +668,20 @@ Panel {
               }
             }
 
+            SettingRow {
+              width: parent.width
+              visible: root.s("ai.assist", "route") !== "off"
+              label: "agent workspace"
+              fontFamily: root.fontFamily
+              help: "Anything the agent opens lands here, placed silently so it never steals your focus. Set 0 to let it open wherever it likes. This is placement, not permission — what it may touch is the policy's business."
+              NumberField {
+                from: 0; to: 10; stepSize: 1
+                value: root.s("agent.workspace", 10)
+                fontFamily: root.fontFamily
+                onModified: function(v) { root.setCfg("agent.workspace", v) }
+              }
+            }
+
             Toggle {
               width: parent.width
               visible: root.s("ai.assist", "route") !== "off"
