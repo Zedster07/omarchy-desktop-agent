@@ -17,6 +17,7 @@
 import { resolve } from "./intents.ts"
 import { loadIntents } from "./registry.ts"
 import { route, plan } from "./plan.ts"
+import { settingStr } from "./settings.ts"
 import { existsSync, unlinkSync } from "node:fs"
 
 const RESULT = process.argv[2]
@@ -162,32 +163,19 @@ if (phrase === "") {
 
 hud({ state: "transcribing", mode: "command", transcript: phrase })
 
-async function setting(key: string, fallback: string): Promise<string> {
-  try {
-    const raw = await Bun.file(`${process.env.HOME}/.config/omarchy/shell.json`).json()
-    let found: any
-    const walk = (v: any) => {
-      if (Array.isArray(v)) v.forEach(walk)
-      else if (v && typeof v === "object") {
-        if (typeof v.id === "string" && v.id.includes("desktop-agent") && v.settings) found = v.settings
-        Object.values(v).forEach(walk)
-      }
-    }
-    walk(raw)
-    const v = found?.[key]
-    return v === undefined || v === null ? fallback : String(v)
-  } catch { return fallback }
-}
 
 const intents = await loadIntents()
 
 // tier 1: the deterministic matcher
-let match = resolve(phrase, intents)
+// Strictness is a real setting now. It was exposed in the manifest from the
+// start and never read, so the slider did nothing.
+const threshold = Number(await settingStr("command.threshold", "62")) / 100
+let match = resolve(phrase, intents, isFinite(threshold) ? threshold : 0.62)
 let aiProposal: { argv: string[]; explanation: string; severity: string; provider: string } | null = null
 let aiRouted: { provider: string } | null = null
 
-const assist = await setting("aiAssist", "route")
-const preference = await setting("aiProvider", "auto")
+const assist = await settingStr("aiAssist", "route")
+const preference = await settingStr("aiProvider", "auto")
 
 if (!match && assist !== "off") {
   // tier 2: a model picks from the SAME list; it can recognise a wording but

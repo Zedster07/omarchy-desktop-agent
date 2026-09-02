@@ -23,122 +23,21 @@
     "allowMultiple": false,
     "defaultSection": "right",
     "defaults": {
-      "commandsEnabled": true,
-      "commandConfirm": "destructive-only",
-      "thirdPartyIntents": true,
-      "agentEnabled": true,
-      "recapEnabled": true,
-      "recapIdleSec": 20,
-      "yoloMaxMinutes": 60,
-      "matchThreshold": 62,
-      "aiAssist": "route",
-      "aiProvider": "auto",
-      "aiModel": "llama3.2:3b"
+      "openSection": "status"
     },
     "schema": [
       {
-        "key": "commandsEnabled",
-        "type": "boolean",
-        "label": "Spoken commands",
-        "description": "Match a spoken phrase against the intent registry and run it, instead of typing it. Dictation is unaffected either way \u2014 that is Voxtype's job and this never touches it.",
-        "defaultValue": true
-      },
-      {
-        "key": "commandConfirm",
+        "key": "openSection",
         "type": "enum",
-        "label": "Confirm spoken commands",
+        "label": "Panel opens on",
         "options": [
-          "never",
-          "destructive-only",
-          "always"
+          "status",
+          "voice",
+          "ai",
+          "policy"
         ],
-        "defaultValue": "destructive-only",
-        "description": "Whether a matched command raises the approval overlay before running. Intents marked destructive always ask, whatever this says."
-      },
-      {
-        "key": "thirdPartyIntents",
-        "type": "boolean",
-        "label": "Let other plugins register commands",
-        "description": "Read voice-intents.json from other installed plugins so their actions can be spoken. Each plugin has to be approved once before its intents go live \u2014 installing a plugin must not silently extend what your microphone can do.",
-        "defaultValue": true
-      },
-      {
-        "key": "matchThreshold",
-        "type": "integer",
-        "label": "Match strictness (%)",
-        "min": 40,
-        "max": 95,
-        "step": 5,
-        "defaultValue": 62,
-        "description": "How close a phrase must be to a registered command before it runs. Higher means more phrases are rejected as unrecognised, which is the safe direction: an unmatched command says so, a wrongly matched one just happens."
-      },
-      {
-        "key": "aiAssist",
-        "type": "enum",
-        "label": "AI assistance",
-        "options": [
-          "off",
-          "route",
-          "route+plan"
-        ],
-        "defaultValue": "route",
-        "description": "off: only phrases in the command list work. route: when nothing matches, your AI picks from the same list \u2014 it can recognise a new wording but cannot invent an action. route+plan: also lets it write a new command for requests the list does not cover, such as playing something on YouTube. Anything a model decides always needs your approval, and planned commands are checked against a denylist first."
-      },
-      {
-        "key": "aiProvider",
-        "type": "enum",
-        "label": "AI provider",
-        "options": [
-          "auto",
-          "claude",
-          "opencode",
-          "codex",
-          "gemini",
-          "ollama"
-        ],
-        "defaultValue": "auto",
-        "description": "auto prefers an installed CLI agent (claude, then opencode, codex, gemini) and falls back to a local Ollama model only when none is present. The agent is markedly better at the job that matters here \u2014 saying \"none of these\" \u2014 which a small local model gets wrong often enough to act on the wrong command. Cost of that accuracy is about ten seconds on the miss path versus five, and tokens; recognised phrases never reach a model at all."
-      },
-      {
-        "key": "aiModel",
-        "type": "string",
-        "label": "Local fallback model",
-        "defaultValue": "llama3.2:3b",
-        "description": "Ollama model used only when no CLI agent is installed. Ignored otherwise."
-      },
-      {
-        "key": "agentEnabled",
-        "type": "boolean",
-        "label": "Agent control (MCP)",
-        "description": "Allow an MCP client such as Claude Code to drive the desktop through the same policy. Voice works with this off.",
-        "defaultValue": true
-      },
-      {
-        "key": "recapEnabled",
-        "type": "boolean",
-        "label": "End-of-run recap",
-        "description": "After the agent has been idle a while, slide in a card listing everything it did. Never takes focus.",
-        "defaultValue": true
-      },
-      {
-        "key": "recapIdleSec",
-        "type": "integer",
-        "label": "Recap idle window (seconds)",
-        "min": 5,
-        "max": 300,
-        "step": 5,
-        "defaultValue": 20,
-        "description": "MCP has no end-of-task signal, so a run counts as finished once the desktop has been quiet this long."
-      },
-      {
-        "key": "yoloMaxMinutes",
-        "type": "integer",
-        "label": "Maximum unattended lease (minutes)",
-        "min": 5,
-        "max": 240,
-        "step": 5,
-        "defaultValue": 60,
-        "description": "Hard ceiling on a full-access lease, re-checked on every action. A longer lease is truncated, not honoured."
+        "defaultValue": "status",
+        "description": "Which section the panel shows when you click the bar icon. Everything else \u2014 speech engine, API key, AI assistance, policy \u2014 is configured inside the panel itself, so there is only one place to change a setting."
       }
     ]
   }

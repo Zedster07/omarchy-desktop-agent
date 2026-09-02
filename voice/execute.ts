@@ -5,6 +5,7 @@
 // Detached from the voxtype hook on purpose: this can block for as long as a
 // human takes to answer an approval prompt, and the hook cannot.
 
+import { settingStr } from "./settings.ts"
 import type { Intent } from "./intents.ts"
 import { appendFileSync, mkdirSync } from "node:fs"
 
@@ -59,22 +60,6 @@ async function ipc(fn: string, arg: string): Promise<string> {
   return (await new Response(p.stdout).text()).trim()
 }
 
-async function setting(key: string, fallback: string): Promise<string> {
-  try {
-    const raw = await Bun.file(`${HOME}/.config/omarchy/shell.json`).json()
-    let found: any
-    const walk = (v: any) => {
-      if (Array.isArray(v)) v.forEach(walk)
-      else if (v && typeof v === "object") {
-        if (typeof v.id === "string" && v.id.includes("desktop-agent") && v.settings) found = v.settings
-        Object.values(v).forEach(walk)
-      }
-    }
-    walk(raw)
-    const v = found?.[key]
-    return v === undefined || v === null ? fallback : String(v)
-  } catch { return fallback }
-}
 
 // ---------------------------------------------------------------- targeting
 //
@@ -136,7 +121,7 @@ if (argv.some(a => LEFTOVER.test(a))) {
 // A deterministic match is a phrase someone registered on purpose and still
 // runs immediately. A model's opinion costs one keystroke.
 const destructive = intent.severity === "destructive"
-const confirm = await setting("commandConfirm", "destructive-only")
+const confirm = await settingStr("commandConfirm", "destructive-only")
 const fromModel = aiProposed !== null || aiRouted !== null
 const needsApproval = fromModel
   || confirm === "always"

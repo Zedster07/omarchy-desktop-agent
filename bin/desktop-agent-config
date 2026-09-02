@@ -1,0 +1,214 @@
+#!/usr/bin/env python3
+"""Read and write the plugin's own settings.
+
+Why a file of our own rather than shell.json: the panel is the config UI now,
+and two writers on shell.json (the shell's own settings form and this) is how a
+setting quietly gets lost. shell.json keeps what the BAR needs; everything the
+voice and agent paths read lives here.
+
+The remote API key is deliberately NOT kept here. It lives where voxtype reads
+it, mode 0600, and this tool will report whether one is set but never print it:
+a config file that echoes secrets ends up in a screenshot eventually.
+
+  desktop-agent-config all
+  desktop-agent-config get voice.sttMode
+  desktop-agent-config set voice.sttMode groq
+  desktop-agent-config set-secret <key>      # reads stdin if omitted
+  desktop-agent-config clear-secret
+  desktop-agent-config apply-stt             # push STT settings into voxtype
+"""
+import json
+import os
+import re
+import subprocess
+import sys
+
+HOME = os.path.expanduser("~")
+CFG = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"),
+                   "desktop-agent", "settings.json")
+VOX = os.path.join(os.environ.get("XDG_CONFIG_HOME", f"{HOME}/.config"),
+                   "voxtype", "config.toml")
+
+DEFAULTS = {
+    "voice": {
+        "sttMode": "local",                 # local | remote
+        "localModel": "small.en",
+        "remoteEndpoint": "https://api.groq.com/openai/v1/audio/transcriptions",
+        "remoteModel": "whisper-large-v3-turbo",
+        "biasPrompt": True,
+    },
+    "ai": {"assist": "route", "provider": "auto", "localModel": "llama3.2:3b"},
+    "command": {"enabled": True, "confirm": "destructive-only",
+                "thirdParty": True, "threshold": 62},
+    "policy": {"leaseMaxMinutes": 60, "recap": True, "recapIdleSec": 20},
+}
+
+# Spoken words this machine actually needs to get right. Same idea as
+# ai-coworker's sttPrompt(): tell whisper what to EXPECT, because a decoder with
+# no expectations turns "open" into "hope" and "CTA" into "seat A".
+BIAS_PROMPT = ("Commands: open, close, launch, workspace, volume, mute, unmute, "
+               "lock screen, fullscreen, screenshot, theme, brightness, play, "
+               "YouTube, Chrome, Firefox, terminal, browser, editor, files.")
+
+
+def load():
+    d = json.loads(json.dumps(DEFAULTS))
+    try:
+        cur = json.load(open(CFG))
+    except Exception:
+        return d
+    for k, v in cur.items():
+        if isinstance(v, dict) and isinstance(d.get(k), dict):
+            d[k].update(v)
+        else:
+            d[k] = v
+    return d
+
+
+def save(d):
+    os.makedirs(os.path.dirname(CFG), exist_ok=True)
+    tmp = CFG + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(d, f, indent=2)
+    os.replace(tmp, CFG)
+    os.chmod(CFG, 0o600)
+
+
+def vox_read():
+    try:
+        return open(VOX).read()
+    except Exception:
+        return ""
+
+
+def vox_write(text):
+    os.makedirs(os.path.dirname(VOX), exist_ok=True)
+    tmp = VOX + ".tmp"
+    with open(tmp, "w") as f:
+        f.write(text)
+    os.replace(tmp, VOX)
+    os.chmod(VOX, 0o600)
+
+
+def vox_set(text, section, key, value, quote=True):
+    """Set key inside [section], preserving comments and everything else."""
+    val = f'"{value}"' if quote else str(value)
+    sec = re.search(rf"(?m)^\[{re.escape(section)}\]\s*$", text)
+    if not sec:
+        return text.rstrip() + f"\n\n[{section}]\n{key} = {val}\n"
+    start = sec.end()
+    nxt = re.search(r"(?m)^\[", text[start:])
+    end = start + (nxt.start() if nxt else len(text) - start)
+    body = text[start:end]
+    line = re.search(rf"(?m)^\s*#?\s*{re.escape(key)}\s*=.*$", body)
+    if line:
+        body = body[:line.start()] + f"{key} = {val}" + body[line.end():]
+    else:
+        body = "\n" + f"{key} = {val}" + body
+    return text[:start] + body + text[end:]
+
+
+def has_secret():
+    return bool(re.search(r'(?m)^\s*remote_api_key\s*=\s*"[^"]+"', vox_read()))
+
+
+def restart_voxtype():
+    subprocess.run(["systemctl", "--user", "restart", "voxtype"],
+                   capture_output=True)
+
+
+def apply_stt():
+    """Push the plugin's STT choices into voxtype's config."""
+    d = load()
+    v = d["voice"]
+    t = vox_read()
+    if not t:
+        print("no voxtype config at " + VOX, file=sys.stderr)
+        return 1
+
+    mode = "remote" if v.get("sttMode") == "remote" else "local"
+    t = vox_set(t, "whisper", "mode", mode)
+    if mode == "remote":
+        t = vox_set(t, "whisper", "remote_endpoint", v["remoteEndpoint"])
+        t = vox_set(t, "whisper", "remote_model", v["remoteModel"])
+    else:
+        t = vox_set(t, "whisper", "model", v["localModel"])
+    t = vox_set(t, "whisper", "initial_prompt",
+                BIAS_PROMPT if v.get("biasPrompt", True) else "")
+    vox_write(t)
+    restart_voxtype()
+    print(f"stt -> {mode}" + (f" ({v['remoteModel']})" if mode == "remote"
+                              else f" ({v['localModel']})"))
+    return 0
+
+
+def main(argv):
+    cmd = argv[1] if len(argv) > 1 else "all"
+
+    if cmd == "all":
+        d = load()
+        d["voice"]["hasRemoteKey"] = has_secret()
+        print(json.dumps(d))
+        return 0
+
+    if cmd == "get":
+        node = load()
+        for part in (argv[2] if len(argv) > 2 else "").split("."):
+            node = node.get(part) if isinstance(node, dict) else None
+            if node is None:
+                break
+        if node is None:
+            print("")
+        elif isinstance(node, bool):
+            print("true" if node else "false")
+        elif isinstance(node, (dict, list)):
+            print(json.dumps(node))
+        else:
+            print(node)
+        return 0
+
+    if cmd == "set":
+        key, raw = argv[2], argv[3] if len(argv) > 3 else ""
+        d = load()
+        parts = key.split(".")
+        node = d
+        for p in parts[:-1]:
+            node = node.setdefault(p, {})
+        if raw in ("true", "false"):
+            val = raw == "true"
+        else:
+            try:
+                val = int(raw)
+            except ValueError:
+                val = raw
+        node[parts[-1]] = val
+        save(d)
+        print("ok")
+        return 0
+
+    if cmd == "set-secret":
+        key = argv[2] if len(argv) > 2 else sys.stdin.read().strip()
+        if not key:
+            print("no key given", file=sys.stderr)
+            return 1
+        vox_write(vox_set(vox_read(), "whisper", "remote_api_key", key))
+        restart_voxtype()
+        print("key stored")   # never the key itself
+        return 0
+
+    if cmd == "clear-secret":
+        t = re.sub(r'(?m)^\s*remote_api_key\s*=.*\n?', "", vox_read())
+        vox_write(t)
+        restart_voxtype()
+        print("key cleared")
+        return 0
+
+    if cmd == "apply-stt":
+        return apply_stt()
+
+    print(__doc__, file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv))

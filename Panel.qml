@@ -1,13 +1,14 @@
-// Desktop Agent control panel.
+// Desktop Agent control panel — status readout and the plugin's config UI.
 //
-// Reads state off the service object the shell injects. It keeps no copy of
-// its own: an earlier version re-probed the same facts with its own
-// subprocesses and ran its own lease clock, which meant the bar and the panel
-// could disagree about whether a lease was running.
+// State is read off the service object the shell injects; settings come from
+// `desktop-agent-config`, which owns ~/.config/desktop-agent/settings.json.
+// The panel never parses or writes that file itself: one writer, and it is a
+// tool that can be run and tested from a terminal.
 //
-// Laid out as an instrument rather than a form -- a status block you read at
-// a glance, then controls in descending order of how often they are wanted
-// and ascending order of how much damage they do.
+// The remote API key is the exception to "the panel edits everything". It is
+// written straight through to voxtype's config at 0600 and never read back --
+// the panel only ever learns whether one is set. A settings screen that can
+// redisplay a secret is a secret that ends up in a screenshot.
 
 import QtQuick
 import QtQuick.Effects
@@ -30,6 +31,7 @@ Panel {
 
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
 
+  // ---- live state from the service
   readonly property bool policyEnabled: service ? service.policyEnabled : true
   readonly property bool policyReadable: service ? service.policyReadable : true
   readonly property int pendingCount: service ? service.pendingCount : 0
@@ -39,10 +41,34 @@ Panel {
   readonly property string voicePhase: service ? service.voiceState : "idle"
   readonly property bool listening: voicePhase === "listening"
 
+  // ---- settings, loaded from desktop-agent-config
+  property var cfg: ({})
+  property bool cfgLoaded: false
+  property string busy: ""
+
+  function s(path, fallback) {
+    var node = root.cfg
+    var parts = path.split(".")
+    for (var i = 0; i < parts.length; i++) {
+      if (!node || typeof node !== "object") return fallback
+      node = node[parts[i]]
+    }
+    return node === undefined || node === null ? fallback : node
+  }
+
+  function setCfg(key, value) {
+    root.busy = key
+    setProc.command = ["desktop-agent-config", "set", key, String(value)]
+    setProc.running = true
+  }
+
+  function applyStt() {
+    root.busy = "stt"
+    applyProc.running = true
+  }
+
   readonly property color tone: !policyEnabled || !policyReadable ? Theme.danger
-    : yoloActive ? Theme.caution
-    : listening ? Theme.ok
-    : Theme.ok
+    : yoloActive ? Theme.caution : Theme.ok
 
   readonly property string glyph: !policyEnabled ? "󰜺"
     : listening ? "󰍬" : yoloActive ? "󰸋" : "󰂽"
@@ -53,7 +79,17 @@ Panel {
     : listening ? "listening"
     : "policy active"
 
-  function refresh() { if (service) { service.probe(); service.readYolo() } }
+  property var settings: ({})
+  property int tab: {
+    var want = settings && settings.openSection ? String(settings.openSection) : "status"
+    var i = ["status", "voice", "ai", "policy"].indexOf(want)
+    return i >= 0 ? i : 0
+  }
+
+  function refresh() {
+    if (service) { service.probe(); service.readYolo() }
+    if (!cfgProc.running) cfgProc.running = true
+  }
   function toggleKillswitch() { if (service) service.toggleKillswitch() }
 
   function open() { setCenterHoverRevealSuppressed(false); root.controller.show(); refresh() }
@@ -74,17 +110,38 @@ Panel {
       root.bar.centerHoverRevealSuppressed = value
   }
 
-  // Restored after being dropped in the redesign: without it the panel has an
-  // ipcTarget nobody serves, so `ipc call ... panel open` answers "Target not
-  // found" and the only way in is the bar icon.
+  Process {
+    id: cfgProc
+    command: ["desktop-agent-config", "all"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        try { root.cfg = JSON.parse(String(line)); root.cfgLoaded = true }
+        catch (e) { console.warn("desktop-agent: bad settings json: " + e) }
+      }
+    }
+  }
+  Process { id: setProc; onExited: { root.busy = ""; cfgProc.running = true } }
+  Process { id: applyProc; command: ["desktop-agent-config", "apply-stt"]; onExited: { root.busy = ""; cfgProc.running = true } }
+  Process { id: secretProc; onExited: { root.busy = ""; cfgProc.running = true } }
+  Process { id: openProc }
+
+  Component.onCompleted: refresh()
+
   IpcHandler {
     target: root.ipcTarget
-
     function open(): void { root.openFromHotkey() }
     function close(): void { root.close() }
     function show(): void { root.openFromHotkey() }
     function hide(): void { root.close() }
     function toggle(): void { root.toggle() }
+
+    // Open straight to a section. Handy for a keybinding that goes to the
+    // voice settings, and it makes the config UI testable without a mouse.
+    function section(name: string): void {
+      var i = ["status", "voice", "ai", "policy"].indexOf(String(name))
+      if (i >= 0) root.tab = i
+      root.openFromHotkey()
+    }
   }
 
   KeyboardPanel {
@@ -95,7 +152,7 @@ Panel {
     open: root.opened
     centerOnBar: true
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(430))
+    contentWidth: panel.fittedContentWidth(Style.space(460))
     contentHeight: panel.fittedContentHeight(main.implicitHeight)
 
     PanelKeyCatcher {
@@ -119,7 +176,7 @@ Panel {
           width: scroll.width
           spacing: Style.spacing.xxl
 
-          // ---- status block
+          // ================================================ status block
           Item {
             width: parent.width
             height: hero.implicitHeight + Style.spacing.xxl * 2
@@ -132,14 +189,12 @@ Panel {
               shadowBlur: 0.9
               shadowScale: 1.02
             }
-
             Rectangle {
               id: heroPlate
               anchors.fill: parent
               radius: Style.cornerRadius
               color: Util.alpha(root.tone, 0.06)
             }
-
             HudScanlines { anchors.fill: parent; color: Color.foreground; strength: 0.02 }
             HudFrame { anchors.fill: parent; color: root.tone; hairlineOpacity: 0.16 }
 
@@ -165,7 +220,6 @@ Panel {
                 spacing: Style.spacing.xs
 
                 HudLabel { text: "desktop agent"; tone: Color.foreground }
-
                 Text {
                   width: parent.width
                   text: root.statusLine
@@ -179,132 +233,354 @@ Panel {
             }
           }
 
-          // ---- readouts
-          Row {
+          TabBar {
             width: parent.width
-            spacing: Style.spacing.controlGap
-
-            Repeater {
-              model: [
-                { k: "voice",   v: root.voiceAvailable ? "ready" : "offline", ok: root.voiceAvailable },
-                { k: "waiting", v: String(root.pendingCount),                 ok: root.pendingCount === 0 },
-                { k: "policy",  v: root.policyEnabled ? "armed" : "off",      ok: root.policyEnabled },
-              ]
-              Item {
-                width: (main.width - Style.spacing.controlGap * 2) / 3
-                height: cell.implicitHeight + Style.spacing.xl * 2
-
-                Rectangle {
-                  anchors.fill: parent
-                  radius: Style.cornerRadius
-                  color: Util.alpha(Color.foreground, 0.04)
-                  border.width: 1
-                  border.color: Util.alpha(modelData.ok ? Color.foreground : Theme.danger, 0.16)
-                }
-
-                Column {
-                  id: cell
-                  anchors.centerIn: parent
-                  spacing: Style.spacing.xxs
-
-                  HudLabel {
-                    text: modelData.k
-                    tone: Color.foreground
-                    anchors.horizontalCenter: parent.horizontalCenter
-                  }
-                  Text {
-                    anchors.horizontalCenter: parent.horizontalCenter
-                    text: modelData.v
-                    color: modelData.ok ? Color.foreground : Theme.danger
-                    font.family: root.fontFamily
-                    font.pixelSize: Style.font.body
-                    font.bold: true
-                  }
-                }
-              }
-            }
+            tabs: ["status", "voice", "ai", "policy"]
+            current: root.tab
+            onPicked: function(i) { root.tab = i }
           }
 
-          HudRail { width: parent.width; color: root.tone; sweep: root.listening }
-
-          // ---- lease
+          // ==================================================== STATUS
           Column {
             width: parent.width
-            spacing: Style.spacing.md
-
-            HudLabel {
-              text: root.yoloActive ? "full access · " + root.yoloClock + " left" : "full access"
-              tone: root.yoloActive ? Theme.caution : Color.foreground
-              color: root.yoloActive ? Theme.caution : Util.alpha(Color.foreground, 0.45)
-            }
-
-            Text {
-              width: parent.width
-              wrapMode: Text.WordWrap
-              text: root.yoloActive
-                ? "Approvals are being granted without asking. Destructive commands and anything denied still stop."
-                : "Skip approvals for a while. Never overrides a denial, and never auto-runs rm, dd, chmod, kill, systemctl or a package manager."
-              color: Util.alpha(Color.foreground, 0.62)
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.caption
-            }
+            spacing: Style.spacing.xxl
+            visible: root.tab === 0
 
             Row {
-              visible: !root.yoloActive && root.policyEnabled
               width: parent.width
               spacing: Style.spacing.controlGap
 
               Repeater {
-                model: [15, 30, 60]
-                Button {
-                  text: modelData + " min"
-                  foreground: Theme.caution
-                  accent: Theme.caution
-                  bordered: true
-                  focusable: true
-                  fontSize: Style.font.bodySmall
-                  onClicked: if (root.service) root.service.grantYolo(modelData)
+                model: [
+                  { k: "voice",   v: root.voiceAvailable ? "ready" : "offline", ok: root.voiceAvailable },
+                  { k: "waiting", v: String(root.pendingCount),                 ok: root.pendingCount === 0 },
+                  { k: "policy",  v: root.policyEnabled ? "armed" : "off",      ok: root.policyEnabled },
+                ]
+                Item {
+                  width: (main.width - Style.spacing.controlGap * 2) / 3
+                  height: cell.implicitHeight + Style.spacing.xl * 2
+                  Rectangle {
+                    anchors.fill: parent
+                    radius: Style.cornerRadius
+                    color: Util.alpha(Color.foreground, 0.04)
+                    border.width: 1
+                    border.color: Util.alpha(modelData.ok ? Color.foreground : Theme.danger, 0.16)
+                  }
+                  Column {
+                    id: cell
+                    anchors.centerIn: parent
+                    spacing: Style.spacing.xxs
+                    HudLabel {
+                      text: modelData.k; tone: Color.foreground
+                      anchors.horizontalCenter: parent.horizontalCenter
+                    }
+                    Text {
+                      anchors.horizontalCenter: parent.horizontalCenter
+                      text: modelData.v
+                      color: modelData.ok ? Color.foreground : Theme.danger
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.body
+                      font.bold: true
+                    }
+                  }
                 }
               }
             }
 
-            Button {
-              visible: root.yoloActive
-              text: "End full access now"
-              foreground: Theme.ok
-              accent: Theme.ok
-              bordered: true
-              focusable: true
-              fontSize: Style.font.bodySmall
-              onClicked: if (root.service) root.service.endYolo()
+            HudRail { width: parent.width; color: root.tone; sweep: root.listening }
+
+            Column {
+              width: parent.width
+              spacing: Style.spacing.md
+
+              HudLabel {
+                text: root.yoloActive ? "full access · " + root.yoloClock + " left" : "full access"
+                tone: root.yoloActive ? Theme.caution : Color.foreground
+                color: root.yoloActive ? Theme.caution : Util.alpha(Color.foreground, 0.45)
+              }
+              Text {
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: root.yoloActive
+                  ? "Approvals are being granted without asking. Destructive commands and anything denied still stop."
+                  : "Skip approvals for a while. Never overrides a denial, and never auto-runs rm, dd, chmod, kill, systemctl or a package manager."
+                color: Util.alpha(Color.foreground, 0.62)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+              Row {
+                visible: !root.yoloActive && root.policyEnabled
+                spacing: Style.spacing.controlGap
+                Repeater {
+                  model: [15, 30, 60]
+                  Button {
+                    text: modelData + " min"
+                    foreground: Theme.caution; accent: Theme.caution
+                    bordered: true; focusable: true
+                    fontSize: Style.font.bodySmall
+                    onClicked: if (root.service) root.service.grantYolo(modelData)
+                  }
+                }
+              }
+              Button {
+                visible: root.yoloActive
+                text: "End full access now"
+                foreground: Theme.ok; accent: Theme.ok
+                bordered: true; focusable: true
+                fontSize: Style.font.bodySmall
+                onClicked: if (root.service) root.service.endYolo()
+              }
             }
           }
 
-          HudRail { width: parent.width; color: Color.foreground }
-
-          // ---- controls, most destructive last
+          // ===================================================== VOICE
           Column {
             width: parent.width
-            spacing: Style.spacing.controlGap
+            spacing: Style.spacing.xxl
+            visible: root.tab === 1
+
+            SettingRow {
+              width: parent.width
+              label: "speech engine"
+              fontFamily: root.fontFamily
+              help: root.s("voice.sttMode", "local") === "remote"
+                ? "Audio is sent to the endpoint below. Faster and markedly more accurate than anything local on modest hardware — and it leaves the machine."
+                : "Runs entirely on this machine. Nothing leaves it."
+              Dropdown {
+                width: parent.width
+                showLabel: false
+                options: ["local", "remote"]
+                value: root.s("voice.sttMode", "local")
+                onChanged: function(v) { root.setCfg("voice.sttMode", v) }
+              }
+            }
+
+            SettingRow {
+              width: parent.width
+              visible: root.s("voice.sttMode", "local") === "local"
+              label: "local model"
+              fontFamily: root.fontFamily
+              help: "Bigger is more accurate and slower. base is fastest; small.en is the usual balance."
+              Dropdown {
+                width: parent.width
+                showLabel: false
+                options: ["base.en", "small.en", "medium.en", "large-v3-turbo"]
+                value: root.s("voice.localModel", "small.en")
+                onChanged: function(v) { root.setCfg("voice.localModel", v) }
+              }
+            }
+
+            SettingRow {
+              width: parent.width
+              visible: root.s("voice.sttMode", "local") === "remote"
+              label: "remote model"
+              fontFamily: root.fontFamily
+              help: "whisper-large-v3-turbo on Groq is the same model good cloud dictation uses."
+              Dropdown {
+                width: parent.width
+                showLabel: false
+                options: ["whisper-large-v3-turbo", "whisper-large-v3"]
+                value: root.s("voice.remoteModel", "whisper-large-v3-turbo")
+                onChanged: function(v) { root.setCfg("voice.remoteModel", v) }
+              }
+            }
+
+            SettingRow {
+              width: parent.width
+              visible: root.s("voice.sttMode", "local") === "remote"
+              label: root.s("voice.hasRemoteKey", false) ? "api key — set" : "api key — not set"
+              fontFamily: root.fontFamily
+              help: "Stored where voxtype reads it, mode 0600, and never shown again. Get one at console.groq.com."
+              Row {
+                width: parent.width
+                spacing: Style.spacing.controlGap
+
+                TextField {
+                  id: keyField
+                  width: parent.width - saveKey.width - clearKey.width - Style.spacing.controlGap * 2
+                  password: true
+                  placeholderText: root.s("voice.hasRemoteKey", false) ? "replace key…" : "gsk_…"
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.bodySmall
+                  onAccepted: if (text.length > 0) {
+                    root.busy = "key"
+                    secretProc.command = ["desktop-agent-config", "set-secret", text]
+                    secretProc.running = true
+                    text = ""
+                  }
+                }
+                Button {
+                  id: saveKey
+                  text: "Save"
+                  foreground: Theme.ok; accent: Theme.ok
+                  bordered: true; focusable: true
+                  fontSize: Style.font.bodySmall
+                  onClicked: if (keyField.text.length > 0) {
+                    root.busy = "key"
+                    secretProc.command = ["desktop-agent-config", "set-secret", keyField.text]
+                    secretProc.running = true
+                    keyField.text = ""
+                  }
+                }
+                Button {
+                  id: clearKey
+                  text: "Clear"
+                  visible: root.s("voice.hasRemoteKey", false)
+                  foreground: Theme.danger; accent: Theme.danger
+                  focusable: true
+                  fontSize: Style.font.bodySmall
+                  onClicked: {
+                    root.busy = "key"
+                    secretProc.command = ["desktop-agent-config", "clear-secret"]
+                    secretProc.running = true
+                  }
+                }
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              label: "Vocabulary bias"
+              description: "Prime the decoder with the command words. Turns \"hope chrome\" back into \"open chrome\"."
+              checked: root.s("voice.biasPrompt", true)
+              fontFamily: root.fontFamily
+              onClicked: root.setCfg("voice.biasPrompt", !checked)
+            }
+
+            HudRail { width: parent.width; color: Color.foreground }
 
             Row {
               width: parent.width
               spacing: Style.spacing.controlGap
 
               Button {
+                text: root.busy === "stt" ? "Applying…" : "Apply to voxtype"
+                foreground: Theme.ok; accent: Theme.ok
+                bordered: true; focusable: true
+                fontSize: Style.font.bodySmall
+                enabled: root.busy === ""
+                onClicked: root.applyStt()
+              }
+              Button {
+                text: "Mic test"
+                foreground: Color.foreground
+                bordered: true; focusable: true
+                fontSize: Style.font.bodySmall
+                onClicked: {
+                  openProc.command = ["omarchy-launch-tui", "--app-id=org.omarchy.desktop-agent-mic",
+                                      "bash", "-c", "desktop-agent-mictest; echo; read -n1 -r -p 'enter to close'"]
+                  openProc.running = true
+                  root.close()
+                }
+              }
+            }
+          }
+
+          // ======================================================== AI
+          Column {
+            width: parent.width
+            spacing: Style.spacing.xxl
+            visible: root.tab === 2
+
+            SettingRow {
+              width: parent.width
+              label: "assistance"
+              fontFamily: root.fontFamily
+              help: "off: only registered phrases work. route: an AI maps a new wording onto an existing command. route+plan: it may also write a new command, always with your approval."
+              Dropdown {
+                width: parent.width
+                showLabel: false
+                options: ["off", "route", "route+plan"]
+                value: root.s("ai.assist", "route")
+                onChanged: function(v) { root.setCfg("ai.assist", v) }
+              }
+            }
+
+            SettingRow {
+              width: parent.width
+              visible: root.s("ai.assist", "route") !== "off"
+              label: "provider"
+              fontFamily: root.fontFamily
+              help: "auto prefers an installed CLI agent and falls back to a local Ollama model. Only providers found on this machine are used."
+              Dropdown {
+                width: parent.width
+                showLabel: false
+                options: ["auto", "claude", "opencode", "codex", "gemini", "ollama"]
+                value: root.s("ai.provider", "auto")
+                onChanged: function(v) { root.setCfg("ai.provider", v) }
+              }
+            }
+
+            SettingRow {
+              width: parent.width
+              visible: root.s("ai.assist", "route") !== "off"
+              label: "confirm spoken commands"
+              fontFamily: root.fontFamily
+              help: "Anything an AI decided always asks, whatever this says."
+              Dropdown {
+                width: parent.width
+                showLabel: false
+                options: ["never", "destructive-only", "always"]
+                value: root.s("command.confirm", "destructive-only")
+                onChanged: function(v) { root.setCfg("command.confirm", v) }
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              visible: root.s("ai.assist", "route") !== "off"
+              label: "Let other plugins register commands"
+              description: "Each plugin is approved once before its voice commands go live."
+              checked: root.s("command.thirdParty", true)
+              fontFamily: root.fontFamily
+              onClicked: root.setCfg("command.thirdParty", !checked)
+            }
+          }
+
+          // ==================================================== POLICY
+          Column {
+            width: parent.width
+            spacing: Style.spacing.xxl
+            visible: root.tab === 3
+
+            SettingRow {
+              width: parent.width
+              label: "maximum unattended lease"
+              fontFamily: root.fontFamily
+              help: "Hard ceiling, re-checked on every action. A longer lease is truncated, not honoured."
+              NumberField {
+                from: 5; to: 240; stepSize: 5
+                value: root.s("policy.leaseMaxMinutes", 60)
+                fontFamily: root.fontFamily
+                onModified: function(v) { root.setCfg("policy.leaseMaxMinutes", v) }
+              }
+            }
+
+            Toggle {
+              width: parent.width
+              label: "End-of-run recap"
+              description: "After the agent goes quiet, list what it did. Never takes focus."
+              checked: root.s("policy.recap", true)
+              fontFamily: root.fontFamily
+              onClicked: root.setCfg("policy.recap", !checked)
+            }
+
+            HudRail { width: parent.width; color: Color.foreground }
+
+            Row {
+              width: parent.width
+              spacing: Style.spacing.controlGap
+              Button {
                 text: "Edit policy"
                 foreground: Color.foreground
-                bordered: true
-                focusable: true
+                bordered: true; focusable: true
                 fontSize: Style.font.bodySmall
                 onClicked: { if (root.service) root.service.openPolicy(); root.close() }
               }
-
               Button {
                 text: "Audit log"
                 foreground: Color.foreground
-                bordered: true
-                focusable: true
+                bordered: true; focusable: true
                 fontSize: Style.font.bodySmall
                 onClicked: { if (root.service) root.service.openAuditLog(); root.close() }
               }
@@ -315,8 +591,7 @@ Panel {
               text: root.policyEnabled ? "Disable — emergency kill switch" : "Re-enable policy"
               foreground: root.policyEnabled ? Theme.danger : Theme.ok
               accent: root.policyEnabled ? Theme.danger : Theme.ok
-              bordered: true
-              focusable: true
+              bordered: true; focusable: true
               fontSize: Style.font.bodySmall
               onClicked: root.toggleKillswitch()
             }

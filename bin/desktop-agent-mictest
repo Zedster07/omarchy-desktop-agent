@@ -1,0 +1,121 @@
+#!/usr/bin/env bash
+# Records a few seconds, measures the signal, and transcribes it.
+#
+# Exists because "the model is mishearing me" and "the microphone is feeding
+# it mush" look identical from the outside, and swapping models is the
+# expensive way to find out which. Peak and RMS answer it in five seconds.
+set -uo pipefail
+
+# Optional: test a source other than the default, without changing the default.
+#   desktop-agent-mictest 5 <source-name>
+#   desktop-agent-mictest --list
+if [[ "${1:-}" == "--list" ]]; then
+  echo "Input sources:"
+  pactl list sources 2>/dev/null | awk '
+    /^Source #/{name="";desc=""}
+    /Name: alsa_input/{name=$2}
+    /Description:/{sub(/^\t*Description: /,"");desc=$0}
+    /Active Port:/{if(name!="")printf "  %s\n      %s\n", name, desc}'
+  echo
+  echo "default: $(pactl get-default-source 2>/dev/null)"
+  exit 0
+fi
+
+SECS="${1:-5}"
+SOURCE="${2:-}"
+WAV="$(mktemp --suffix=.wav)"
+RAW="$(mktemp --suffix=.pcm)"
+trap 'rm -f "$WAV" "$RAW"' EXIT
+
+SRC="${SOURCE:-$(pactl get-default-source 2>/dev/null)}"
+printf '\033[1mMic test\033[0m — source: %s\n' "${SRC:-unknown}"
+printf 'Speak now for %ss, normally, from where you usually sit.\n' "$SECS"
+for i in 3 2 1; do printf '\r  starting in %s...' "$i"; sleep 1; done
+printf '\r  \033[32mrecording — talk\033[0m           \n'
+
+if [[ -n "$SOURCE" ]]; then
+  pw-record --raw --target "$SOURCE" --rate 16000 --channels 1 --format s16 - > "$RAW" 2>/dev/null &
+else
+  pw-record --raw --rate 16000 --channels 1 --format s16 - > "$RAW" 2>/dev/null &
+fi
+REC=$!
+sleep "$SECS"
+kill "$REC" 2>/dev/null; wait "$REC" 2>/dev/null
+printf '  done\n\n'
+
+python3 - "$RAW" "$WAV" <<'PY'
+import struct, sys, math
+raw, wav = sys.argv[1], sys.argv[2]
+b = open(raw, 'rb').read()
+n = len(b) // 2
+if n == 0:
+    print("  no audio captured at all — is the source right?"); sys.exit(1)
+s = struct.unpack('<%dh' % n, b[:n*2])
+
+peak = max(abs(x) for x in s) / 32768
+rms  = math.sqrt(sum(x*x for x in s) / n) / 32768
+dc   = (sum(s) / n) / 32768
+clip = sum(1 for x in s if abs(x) > 32000) / n
+# fraction of 20ms frames that are essentially silent
+fr, sil = 320, 0
+frames = max(1, n // fr)
+for i in range(frames):
+    ch = s[i*fr:(i+1)*fr]
+    if ch and math.sqrt(sum(x*x for x in ch)/len(ch))/32768 < 0.01: sil += 1
+silence = sil / frames
+
+print(f"  peak      {peak:.3f}")
+print(f"  rms       {rms:.4f}")
+print(f"  dc offset {dc:+.4f}")
+print(f"  clipping  {clip*100:.2f}%")
+print(f"  silence   {silence*100:.0f}% of frames")
+print()
+verdict = []
+if peak < 0.08:   verdict.append("VERY QUIET — raise the mic gain or move closer; whisper guesses when the signal is weak")
+elif peak < 0.20: verdict.append("quiet — a bit more gain would help")
+elif peak > 0.98 or clip > 0.005: verdict.append("CLIPPING — lower the gain; distortion is worse than quiet")
+else:             verdict.append("level is healthy")
+if abs(dc) > 0.02: verdict.append("large DC offset — typical of a cheap USB dongle")
+if silence > 0.75: verdict.append("mostly silence — the mic may not be picking you up")
+for v in verdict: print(f"  -> {v}")
+
+hdr = (b'RIFF' + struct.pack('<I', 36+len(b)) + b'WAVEfmt ' +
+       struct.pack('<IHHIIHH', 16, 1, 1, 16000, 32000, 2, 16) +
+       b'data' + struct.pack('<I', len(b)))
+open(wav, 'wb').write(hdr + b)
+PY
+
+printf '\n\033[1mWhat the model heard\033[0m\n'
+printf '  \033[2mvoxtype (whisper.cpp, %s)\033[0m\n' "$(voxtype config 2>/dev/null | grep -A1 '\[whisper\]' | grep model | cut -d'"' -f2)"
+voxtype transcribe "$WAV" 2>/dev/null | grep -vE '^(Loading|Audio format|Processing)|INFO|^\s*$' | sed 's/^/    /' | tail -3
+
+# Second opinion from a different engine on the SAME clip.
+#
+# This is the only way to separate "the microphone is feeding it mush" from
+# "this engine is bad at my voice". Same bytes, two decoders: if both mangle it
+# the audio is the problem, if only one does the engine is.
+#
+# faster-whisper here mirrors ai-coworker/stt/server.py: VAD trimming before
+# decode, forced language, temperature 0, and the confidence thresholds that
+# drop silence hallucinations.
+FW_VENV="${FW_VENV:-/home/dada/fedora/ai-coworker/stt/venv}"
+if [[ -x "$FW_VENV/bin/python" ]]; then
+  printf '  \033[2mfaster-whisper (base, VAD-filtered)\033[0m\n'
+  "$FW_VENV/bin/python" - "$WAV" <<'PY' 2>/dev/null | sed 's/^/    /'
+import sys, warnings
+warnings.filterwarnings("ignore")
+from faster_whisper import WhisperModel
+m = WhisperModel("base", device="cpu", compute_type="int8")
+segs, info = m.transcribe(
+    sys.argv[1], language="en", temperature=0.0,
+    vad_filter=True, vad_parameters=dict(threshold=0.5, min_silence_duration_ms=700),
+    condition_on_previous_text=False, no_speech_threshold=0.6,
+    log_prob_threshold=-1.0, compression_ratio_threshold=2.4,
+)
+kept = [s.text for s in segs
+        if getattr(s, "no_speech_prob", 0.0) <= 0.6
+        and getattr(s, "avg_logprob", 0.0) >= -1.0]
+text = "".join(kept).strip()
+print(text if text else "(nothing survived the confidence filter)")
+PY
+fi
