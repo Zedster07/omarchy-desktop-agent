@@ -81,6 +81,30 @@ temperature 0, no conditioning on previous text, and per-segment confidence
 thresholds. A decoder handed silence writes plausible sentences, so the
 silence never reaches it.
 
+## Four tiers, escalating
+
+Most requests never reach a model at all.
+
+| tier | who decides | when |
+|---|---|---|
+| **1 match** | nobody — string comparison | a registered phrase. Sub-millisecond. |
+| **2 route** | AI picks from the same list | an unregistered wording of a known command |
+| **3 plan** | AI writes commands | something the list does not cover: playing a song, opening a URL |
+| **4 agent** | AI drives the desktop | anything not expressible as commands at all |
+
+Tier 4 is a hand-off to the MCP half of this project: an agent that can take a
+screenshot, click a particular thing, and react to what it finds. It is opt-in,
+and the safety is not new — every action it takes goes through the same policy
+engine, approval overlay and audit log as any other agent action, and it fails
+closed if the plugin serving that overlay is not loaded.
+
+The agent gets `mcp__desktop__*` and nothing else: no file editing, no shell,
+no tools of its own. `--permission-mode bypassPermissions` means "do not add a
+second prompt on top of the one the policy already shows" — the person is
+talking, not watching a terminal — not "skip the checks".
+
+Anything a model decided still needs your approval before it runs.
+
 ## The action space is a registry, not a prompt
 
 This is the design decision everything else follows from. A spoken phrase is

@@ -622,11 +622,17 @@ Panel {
               width: parent.width
               label: "assistance"
               fontFamily: root.fontFamily
-              help: "off: only registered phrases work. route: an AI maps a new wording onto an existing command. route+plan: it may also write a new command, always with your approval."
+              help: {
+                var v = root.s("ai.assist", "route")
+                if (v === "off") return "Only phrases in the command list work."
+                if (v === "route") return "When nothing matches, an AI picks from the same list. It can recognise a new wording but cannot invent an action."
+                if (v === "route+plan") return "Also lets it write new commands for requests the list does not cover — playing a song, opening a URL. Always shown for approval first."
+                return "Also hands anything that is not expressible as commands to an agent that can see and click the screen. Every action it takes goes through your desktop policy, and a denial stops it."
+              }
               Dropdown {
                 width: parent.width
                 showLabel: false
-                options: ["off", "route", "route+plan"]
+                options: ["off", "route", "route+plan", "route+plan+agent"]
                 value: root.s("ai.assist", "route")
                 onChanged: function(v) { root.setCfg("ai.assist", v) }
               }

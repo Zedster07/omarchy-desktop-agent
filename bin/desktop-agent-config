@@ -42,6 +42,7 @@ DEFAULTS = {
         "biasPrompt": True,
     },
     "ai": {"assist": "route", "provider": "auto", "localModel": "llama3.2:3b"},
+    "agent": {"overlayTarget": "dada.desktop-agent"},
     "command": {"enabled": True, "confirm": "destructive-only",
                 "thirdParty": True, "threshold": 62},
     "policy": {"leaseMaxMinutes": 60, "recap": True, "recapIdleSec": 20},

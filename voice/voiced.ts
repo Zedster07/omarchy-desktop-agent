@@ -21,6 +21,7 @@ import { filterTranscript } from "./filter.ts"
 import { resolve } from "./intents.ts"
 import { loadIntents } from "./registry.ts"
 import { route, plan } from "./plan.ts"
+import { handOff, overlayReady } from "./agent.ts"
 import { setting, settingStr } from "./settings.ts"
 import { resolveTarget, listApps } from "./apps.ts"
 import { existsSync, mkdirSync, readFileSync } from "node:fs"
@@ -45,6 +46,15 @@ function log(msg: string) {
     Bun.write(LOG, `${new Date().toISOString()} ${msg}\n`).catch(() => {})
   } catch {}
   console.error(msg)
+}
+
+function audit(line: string) {
+  try {
+    mkdirSync(`${HOME}/.local/share/desktop-agent`, { recursive: true })
+    require("node:fs").appendFileSync(
+      `${HOME}/.local/share/desktop-agent/desktop.log`,
+      `${new Date().toISOString()} voice ${line}\n`)
+  } catch {}
 }
 
 function hud(patch: Record<string, unknown>) {
@@ -322,6 +332,32 @@ async function runCommand(phrase: string) {
     const planned = await plan(phrase, preference)
     if (planned.refusal) { await clearHud({ state: "error", mode: "command", transcript: phrase, errorText: planned.refusal }, 3600); return }
     if (planned.result) aiProposal = planned.result
+  }
+
+  // ---- tier 4: nothing is expressible as commands, so hand it to an agent
+  // that can look at the screen. Opt-in, and gated by the desktop policy the
+  // whole way through rather than by anything decided here.
+  if (!match && !aiProposal && assist === "route+plan+agent") {
+    const target = await settingStr("agent.overlayTarget", "dada.desktop-agent")
+    if (!(await overlayReady(target))) {
+      await clearHud({ state: "error", mode: "command", transcript: phrase,
+        errorText: "Agent needs the desktop policy plugin loaded" }, 3200)
+      return
+    }
+
+    hud({ state: "transcribing", mode: "command", transcript: phrase,
+          matched: "handing to the agent…" })
+    const t0 = Date.now()
+    const res = await handOff(phrase, {
+      onProgress: () => hud({ state: "transcribing", mode: "command", transcript: phrase,
+                              matched: `agent working · ${Math.round((Date.now() - t0) / 1000)}s` }),
+    })
+    audit(`agent "${phrase}" -> ${res.ok ? "ok" : "failed"}: ${res.summary}`)
+    await clearHud(res.ok
+      ? { state: "done", mode: "command", transcript: phrase, matched: res.summary }
+      : { state: "error", mode: "command", transcript: phrase, errorText: res.summary },
+      res.ok ? 4000 : 3600)
+    return
   }
 
   if (!match && !aiProposal) {
