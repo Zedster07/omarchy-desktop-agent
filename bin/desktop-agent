@@ -10,7 +10,7 @@ set -uo pipefail
 PLUGIN_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 MODELS="${XDG_DATA_HOME:-$HOME/.local/share}/desktop-agent/models"
 UNITS="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
-MODEL="${DESKTOP_AGENT_MODEL:-small}"
+MODEL="${DESKTOP_AGENT_MODEL:-base}"
 
 bold() { printf '\033[1m%s\033[0m\n' "$*"; }
 ok()   { printf '  \033[32m✓\033[0m %s\n' "$*"; }
@@ -29,6 +29,18 @@ doctor() {
   done
   if have whisper-server; then ok "whisper-server"
   else bad "whisper-server is missing  (sudo pacman -S whisper-cpp)"; missing=1; fi
+
+  # Arch splits ggml's compute backends into separate packages, and the base
+  # `ggml` package depends on none of them. Without one, whisper-server starts,
+  # loads a model, and then cannot compute anything -- it just repeats
+  # "search path /usr/lib/ggml does not exist". Checking for the directory is
+  # more honest than checking for a package name, since a backend can also be
+  # vendored or built locally.
+  if compgen -G "/usr/lib/ggml/*.so" >/dev/null 2>&1; then
+    ok "ggml backend ($(basename -a /usr/lib/ggml/libggml-*.so 2>/dev/null | sed 's/libggml-//;s/\.so//' | tr '\n' ' '))"
+  else
+    bad "no ggml compute backend  (sudo pacman -S ggml-cpu)"; missing=1
+  fi
 
   if compgen -G "$MODELS/ggml-*.bin" >/dev/null; then
     for m in "$MODELS"/ggml-*.bin; do ok "model $(basename "$m") ($(du -h "$m" | cut -f1))"; done
@@ -82,8 +94,15 @@ install_units() {
   local bun_path; bun_path="$(command -v bun || echo /usr/bin/bun)"
   sed -e "s|^ExecStart=.*voiced.ts|ExecStart=${bun_path} ${PLUGIN_DIR}/voice/voiced.ts|" \
       "$PLUGIN_DIR/systemd/desktop-agent-voice.service" > "$UNITS/desktop-agent-voice.service"
+  # Threads matter more than anything else here. Measured on an i7-6820HQ:
+  # the small model went 6.02s -> 4.56s just by using all 8 threads instead of
+  # a hardcoded 4. Leave one core for the rest of the desktop.
+  local threads; threads="$(nproc 2>/dev/null || echo 4)"
+  [[ $threads -gt 1 ]] && threads=$((threads - 1))
   sed -e "s|^Environment=MODEL=.*|Environment=MODEL=${MODELS}/ggml-${MODEL}.bin|" \
+      -e "s|^Environment=THREADS=.*|Environment=THREADS=${threads}|" \
       "$PLUGIN_DIR/systemd/desktop-agent-whisper.service" > "$UNITS/desktop-agent-whisper.service"
+  ok "whisper will use ${threads} threads"
   systemctl --user daemon-reload
   ok "units written to $UNITS"
 }
@@ -106,7 +125,13 @@ case "${1:-doctor}" in
   setup)
     if ! have whisper-server; then
       bold "whisper-cpp is not installed. Run this, then re-run setup:"
-      echo "    sudo pacman -S whisper-cpp"
+      echo "    sudo pacman -S whisper-cpp ggml-cpu"
+      exit 1
+    fi
+    if ! compgen -G "/usr/lib/ggml/*.so" >/dev/null 2>&1; then
+      bold "whisper-cpp has no compute backend. Run this, then re-run setup:"
+      echo "    sudo pacman -S ggml-cpu        # required"
+      echo "    sudo pacman -S ggml-vulkan     # optional, uses the GPU"
       exit 1
     fi
     fetch_model || exit 1
@@ -116,5 +141,32 @@ case "${1:-doctor}" in
     doctor
     ;;
   keybinds) keybinds ;;
-  *) echo "usage: desktop-agent [doctor|setup|keybinds]"; exit 2 ;;
+  benchmark)
+    # Latency is the whole product. A model that is 3% more accurate and 4s
+    # slower is not a better dictation engine, it is a worse one, so measure on
+    # the machine rather than trusting a model-size heuristic.
+    have curl || { bad "curl is required"; exit 1; }
+    tone="$(mktemp --suffix=.wav)"
+    python3 -c "
+import struct,math,sys
+r=16000;n=r*5
+d=b''.join(struct.pack('<h',int(2000*math.sin(2*math.pi*220*i/r))) for i in range(n))
+h=b'RIFF'+struct.pack('<I',36+len(d))+b'WAVEfmt '+struct.pack('<IHHIIHH',16,1,1,r,r*2,2,16)+b'data'+struct.pack('<I',len(d))
+open(sys.argv[1],'wb').write(h+d)" "$tone" || { bad "could not build a test clip"; exit 1; }
+    bold "Timing the running engine (3 passes over a 5s clip)"
+    python3 -c "
+import time,subprocess,sys
+ts=[]
+for _ in range(3):
+    t=time.time()
+    subprocess.run(['curl','-s','-X','POST','http://127.0.0.1:8178/inference',
+        '-F','file=@'+sys.argv[1],'-F','response_format=json','-F','language=en'],
+        capture_output=True)
+    ts.append(time.time()-t)
+m=sorted(ts)[1]
+print(f'  median {m:.2f}s')
+print('  ' + ('feels instant' if m<1.5 else 'usable' if m<2.5 else 'too slow — try DESKTOP_AGENT_MODEL=base desktop-agent setup'))" "$tone"
+    rm -f "$tone"
+    ;;
+  *) echo "usage: desktop-agent [doctor|setup|benchmark|keybinds]"; exit 2 ;;
 esac

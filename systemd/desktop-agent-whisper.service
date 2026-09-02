@@ -8,8 +8,9 @@ PartOf=graphical-session.target
 Type=simple
 # Keeps the model resident. This is the difference between ~1.2s and ~2.5s
 # from key-up to text, which is the difference between "magic" and "broken".
-Environment=MODEL=%h/.local/share/desktop-agent/models/ggml-small.bin
-ExecStart=/usr/bin/whisper-server --host 127.0.0.1 --port 8178 --model ${MODEL} --threads 4 --no-timestamps
+Environment=MODEL=%h/.local/share/desktop-agent/models/ggml-base.bin
+Environment=THREADS=4
+ExecStart=/usr/bin/whisper-server --host 127.0.0.1 --port 8178 --model ${MODEL} --threads ${THREADS} --no-timestamps
 Restart=on-failure
 RestartSec=3
 Slice=session.slice

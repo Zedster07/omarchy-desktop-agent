@@ -21,7 +21,7 @@
     "defaults": {
       "voiceEnabled": true,
       "voiceEngine": "whisper.cpp",
-      "voiceModel": "small",
+      "voiceModel": "base",
       "voiceLanguage": "en",
       "voiceInjection": "wtype",
       "voicePreview": false,
@@ -56,8 +56,8 @@
         "type": "enum",
         "label": "Model size",
         "options": ["base", "small", "medium", "large-v3-turbo"],
-        "defaultValue": "small",
-        "description": "Larger is more accurate and slower. small is the recommended balance on CPU; large-v3-turbo is worth it if you have a GPU."
+        "defaultValue": "base",
+        "description": "Larger is more accurate and much slower, and latency matters more than accuracy for dictation. base is ~1.2s on an 8-thread 2016 CPU; small was ~4.6s on the same machine. Run `desktop-agent benchmark` to measure yours before moving up."
       },
       {
         "key": "voiceLanguage",

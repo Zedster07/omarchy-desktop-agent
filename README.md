@@ -88,6 +88,33 @@ Most documented Whisper hallucination is a long-form unattended problem.
 
 Rejections are never silent — the HUD says which rule fired and why.
 
+## Model choice is a latency decision
+
+Dictation lives or dies on the gap between releasing the key and seeing text.
+A model that is a few percent more accurate and four seconds slower is not a
+better dictation engine.
+
+Whisper pads every clip to a fixed 30-second window, so this cost is roughly
+**constant** — a two-second phrase costs the same as a fifteen-second one.
+
+Measured on an i7-6820HQ (2016, 8 threads, `ggml-cpu`, 5s clip):
+
+| Model | Threads | Median | |
+|---|---|---|---|
+| small | 4 | 6.02s | unusable |
+| small | 8 | 4.56s | unusable |
+| **base** | **8** | **1.19s** | ships |
+
+Hence `base` is the default and the units size threads from `nproc`. Measure
+before moving up:
+
+```bash
+desktop-agent benchmark
+```
+
+Under ~1.5s feels instant, under ~2.5s is usable, past that dictation stops
+being worth reaching for.
+
 ## Recovering from a bad transcript
 
 The filter is a fence, not a guarantee, so recovery is one keystroke:
@@ -147,7 +174,12 @@ this identically, gradients included.
 
 ## Requirements
 
-`pw-record` (pipewire), `wtype`, `socat`, `wl-clipboard`, `whisper-cpp`.
+`pw-record` (pipewire), `wtype`, `socat`, `wl-clipboard`, and `whisper-cpp`
+**plus a ggml compute backend**: `ggml-cpu` is required. Arch ships ggml's
+backends as separate packages and the base `ggml` package depends on none of
+them, so `whisper-cpp` alone installs a server that loads a model and then
+cannot compute. `ggml-vulkan` (7 MB) is worth adding if you have a GPU;
+`ggml-cuda` pulls in the whole CUDA toolchain and is rarely worth it.
 The optional agent half additionally needs `bun`, and clicking needs `ydotool`.
 
 ## Licence
