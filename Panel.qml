@@ -1,13 +1,18 @@
 // Desktop Agent control panel.
 //
-// Reads everything off the service object the shell injects. The version this
-// replaces re-probed the same facts with its own subprocesses and kept its own
-// copy of the lease clock, which meant the bar and the panel could disagree
-// about whether a lease was running. There is one owner now, and this is not
-// it.
+// Reads state off the service object the shell injects. It keeps no copy of
+// its own: an earlier version re-probed the same facts with its own
+// subprocesses and ran its own lease clock, which meant the bar and the panel
+// could disagree about whether a lease was running.
+//
+// Laid out as an instrument rather than a form -- a status block you read at
+// a glance, then controls in descending order of how often they are wanted
+// and ascending order of how much damage they do.
 
 import QtQuick
+import QtQuick.Effects
 import Quickshell
+import Quickshell.Io
 import qs.Commons
 import qs.Ui
 import "ui"
@@ -20,13 +25,11 @@ Panel {
 
   property var anchorItem: null
   property var hostWidget: null
-  // Injected by the panel loader for plugins that pair a panel with a service.
   property var service: null
   readonly property var barIdentity: hostWidget || root
 
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
 
-  // ---- mirrored service state (read-only; this panel never writes it)
   readonly property bool policyEnabled: service ? service.policyEnabled : true
   readonly property bool policyReadable: service ? service.policyReadable : true
   readonly property int pendingCount: service ? service.pendingCount : 0
@@ -36,18 +39,26 @@ Panel {
   readonly property string voicePhase: service ? service.voiceState : "idle"
   readonly property bool listening: voicePhase === "listening"
 
+  readonly property color tone: !policyEnabled || !policyReadable ? Theme.danger
+    : yoloActive ? Theme.caution
+    : listening ? Theme.ok
+    : Theme.ok
+
   readonly property string glyph: !policyEnabled ? "󰜺"
-    : listening ? "󰍬"
-    : yoloActive ? "󰸋"
-    : "󰂽"
+    : listening ? "󰍬" : yoloActive ? "󰸋" : "󰂽"
+
+  readonly property string statusLine: !policyReadable ? "policy unreadable — everything refuses"
+    : !policyEnabled ? "kill switch on — every gated action refuses"
+    : yoloActive ? "full access · " + yoloClock + " left"
+    : listening ? "listening"
+    : "policy active"
 
   function refresh() { if (service) { service.probe(); service.readYolo() } }
   function toggleKillswitch() { if (service) service.toggleKillswitch() }
 
   function open() { setCenterHoverRevealSuppressed(false); root.controller.show(); refresh() }
   function openFromHotkey() {
-    root.controller.show()
-    refresh()
+    root.controller.show(); refresh()
     Qt.callLater(function() { if (root.opened) setCenterHoverRevealSuppressed(true) })
   }
   function close() { setCenterHoverRevealSuppressed(false); root.controller.hide() }
@@ -58,10 +69,22 @@ Panel {
       return root.bar.switchPanelFrom(root.barIdentity, direction)
     return false
   }
-
   function setCenterHoverRevealSuppressed(value) {
     if (root.bar && "centerHoverRevealSuppressed" in root.bar)
       root.bar.centerHoverRevealSuppressed = value
+  }
+
+  // Restored after being dropped in the redesign: without it the panel has an
+  // ipcTarget nobody serves, so `ipc call ... panel open` answers "Target not
+  // found" and the only way in is the bar icon.
+  IpcHandler {
+    target: root.ipcTarget
+
+    function open(): void { root.openFromHotkey() }
+    function close(): void { root.close() }
+    function show(): void { root.openFromHotkey() }
+    function hide(): void { root.close() }
+    function toggle(): void { root.toggle() }
   }
 
   KeyboardPanel {
@@ -72,7 +95,7 @@ Panel {
     open: root.opened
     centerOnBar: true
     focusTarget: keyCatcher
-    contentWidth: panel.fittedContentWidth(Style.space(440))
+    contentWidth: panel.fittedContentWidth(Style.space(430))
     contentHeight: panel.fittedContentHeight(main.implicitHeight)
 
     PanelKeyCatcher {
@@ -96,84 +119,123 @@ Panel {
           width: scroll.width
           spacing: Style.spacing.xxl
 
-          // ---- header
-          Row {
-            spacing: Style.spacing.xxl
-            leftPadding: Style.spacing.sm
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              text: root.glyph
-              color: !root.policyEnabled ? Theme.danger
-                : root.listening ? Theme.ok
-                : root.yoloActive ? Theme.caution
-                : Theme.ok
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.displayLarge
-            }
-
-            Column {
-              anchors.verticalCenter: parent.verticalCenter
-              spacing: Style.spacing.xxs
-
-              Text {
-                text: "DESKTOP AGENT"
-                color: Color.foreground
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.title
-                font.bold: true
-                font.letterSpacing: 1
-              }
-
-              Text {
-                text: !root.policyReadable ? "Policy unreadable — everything refuses"
-                  : !root.policyEnabled ? "Kill switch on — every gated action refuses"
-                  : root.yoloActive ? "Full access for " + root.yoloClock
-                  : root.listening ? "Listening"
-                  : "Policy active"
-                color: (!root.policyEnabled || !root.policyReadable) ? Theme.danger
-                  : root.yoloActive ? Theme.caution
-                  : Util.alpha(Color.foreground, 0.72)
-                font.family: root.fontFamily
-                font.pixelSize: Style.font.caption
-              }
-            }
-          }
-
-          PanelSeparator { width: parent.width }
-
-          // ---- status
-          Column {
+          // ---- status block
+          Item {
             width: parent.width
-            spacing: Style.spacing.md
+            height: hero.implicitHeight + Style.spacing.xxl * 2
 
-            StatusRow {
-              width: parent.width
-              label: "Voice"
-              value: root.voiceAvailable ? "ready" : "not running"
-              good: root.voiceAvailable
-              fontFamily: root.fontFamily
+            MultiEffect {
+              anchors.fill: heroPlate
+              source: heroPlate
+              shadowEnabled: true
+              shadowColor: Util.alpha(root.tone, 0.35)
+              shadowBlur: 0.9
+              shadowScale: 1.02
             }
 
-            StatusRow {
-              width: parent.width
-              label: "Waiting for you"
-              value: String(root.pendingCount)
-              good: root.pendingCount === 0
-              fontFamily: root.fontFamily
+            Rectangle {
+              id: heroPlate
+              anchors.fill: parent
+              radius: Style.cornerRadius
+              color: Util.alpha(root.tone, 0.06)
+            }
+
+            HudScanlines { anchors.fill: parent; color: Color.foreground; strength: 0.02 }
+            HudFrame { anchors.fill: parent; color: root.tone; hairlineOpacity: 0.16 }
+
+            Row {
+              id: hero
+              anchors.left: parent.left
+              anchors.right: parent.right
+              anchors.verticalCenter: parent.verticalCenter
+              anchors.margins: Style.spacing.xxl
+              spacing: Style.spacing.xxl
+
+              Text {
+                anchors.verticalCenter: parent.verticalCenter
+                text: root.glyph
+                color: root.tone
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.displayLarge
+              }
+
+              Column {
+                anchors.verticalCenter: parent.verticalCenter
+                width: parent.width - Style.space(40) - Style.spacing.xxl
+                spacing: Style.spacing.xs
+
+                HudLabel { text: "desktop agent"; tone: Color.foreground }
+
+                Text {
+                  width: parent.width
+                  text: root.statusLine
+                  color: root.tone
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.subtitle
+                  font.bold: true
+                  elide: Text.ElideRight
+                }
+              }
             }
           }
 
-          PanelSeparator { width: parent.width }
+          // ---- readouts
+          Row {
+            width: parent.width
+            spacing: Style.spacing.controlGap
+
+            Repeater {
+              model: [
+                { k: "voice",   v: root.voiceAvailable ? "ready" : "offline", ok: root.voiceAvailable },
+                { k: "waiting", v: String(root.pendingCount),                 ok: root.pendingCount === 0 },
+                { k: "policy",  v: root.policyEnabled ? "armed" : "off",      ok: root.policyEnabled },
+              ]
+              Item {
+                width: (main.width - Style.spacing.controlGap * 2) / 3
+                height: cell.implicitHeight + Style.spacing.xl * 2
+
+                Rectangle {
+                  anchors.fill: parent
+                  radius: Style.cornerRadius
+                  color: Util.alpha(Color.foreground, 0.04)
+                  border.width: 1
+                  border.color: Util.alpha(modelData.ok ? Color.foreground : Theme.danger, 0.16)
+                }
+
+                Column {
+                  id: cell
+                  anchors.centerIn: parent
+                  spacing: Style.spacing.xxs
+
+                  HudLabel {
+                    text: modelData.k
+                    tone: Color.foreground
+                    anchors.horizontalCenter: parent.horizontalCenter
+                  }
+                  Text {
+                    anchors.horizontalCenter: parent.horizontalCenter
+                    text: modelData.v
+                    color: modelData.ok ? Color.foreground : Theme.danger
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.body
+                    font.bold: true
+                  }
+                }
+              }
+            }
+          }
+
+          HudRail { width: parent.width; color: root.tone; sweep: root.listening }
 
           // ---- lease
           Column {
             width: parent.width
             spacing: Style.spacing.md
 
-            PanelSectionHeader {
-              width: parent.width
-              text: root.yoloActive ? "FULL ACCESS — " + root.yoloClock + " LEFT" : "FULL ACCESS"
+            HudLabel {
+              text: root.yoloActive ? "full access · " + root.yoloClock + " left" : "full access"
+              tone: root.yoloActive ? Theme.caution : Color.foreground
+              color: root.yoloActive ? Theme.caution : Util.alpha(Color.foreground, 0.45)
             }
 
             Text {
@@ -182,7 +244,7 @@ Panel {
               text: root.yoloActive
                 ? "Approvals are being granted without asking. Destructive commands and anything denied still stop."
                 : "Skip approvals for a while. Never overrides a denial, and never auto-runs rm, dd, chmod, kill, systemctl or a package manager."
-              color: Util.alpha(Color.foreground, 0.72)
+              color: Util.alpha(Color.foreground, 0.62)
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
             }
@@ -218,23 +280,12 @@ Panel {
             }
           }
 
-          PanelSeparator { width: parent.width }
+          HudRail { width: parent.width; color: Color.foreground }
 
-          // ---- actions
+          // ---- controls, most destructive last
           Column {
             width: parent.width
             spacing: Style.spacing.controlGap
-
-            Button {
-              width: parent.width
-              text: root.policyEnabled ? "Disable — emergency kill switch" : "Re-enable policy"
-              foreground: root.policyEnabled ? Theme.danger : Theme.ok
-              accent: root.policyEnabled ? Theme.danger : Theme.ok
-              bordered: true
-              focusable: true
-              fontSize: Style.font.bodySmall
-              onClicked: root.toggleKillswitch()
-            }
 
             Row {
               width: parent.width
@@ -257,6 +308,17 @@ Panel {
                 fontSize: Style.font.bodySmall
                 onClicked: { if (root.service) root.service.openAuditLog(); root.close() }
               }
+            }
+
+            Button {
+              width: parent.width
+              text: root.policyEnabled ? "Disable — emergency kill switch" : "Re-enable policy"
+              foreground: root.policyEnabled ? Theme.danger : Theme.ok
+              accent: root.policyEnabled ? Theme.danger : Theme.ok
+              bordered: true
+              focusable: true
+              fontSize: Style.font.bodySmall
+              onClicked: root.toggleKillswitch()
             }
           }
         }

@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
@@ -7,31 +8,20 @@ import "."
 
 // The approval prompt.
 //
-// This is an authorization dialog, so it is built on the shell's polkit
-// surface rather than the generic popup one: same background, same border
-// tokens, same scrim, same gradient if the theme defines one. A user who has
-// themed "something wants permission" has themed this too, and it sits next
-// to the system password prompt without looking like a different application
-// wrote it.
+// Built on the shell's polkit surface, so a theme that styles the system
+// password dialog styles this too. The instrument look -- corner brackets, a
+// countdown ring, a glow behind the accent -- is drawn entirely from theme
+// tokens; there is not one colour literal in this file, which is what lets it
+// survive a theme swap mid-prompt.
 //
-// Three things this deliberately does that the version it replaces did not:
-//
-//   * The auto-deny timeout is visible. A prompt that silently expires after
-//     two minutes trains people to distrust the whole mechanism -- you walk
-//     back to your desk, the thing was refused, and nothing ever said so. The
-//     bar across the top drains in real time and the button relabels itself as
-//     it gets close.
-//   * Severity is carried by the card, not just the text. A destructive
-//     command re-tints the border and the header so the irreversible case
-//     cannot be waved through with the same muscle memory as a click.
-//   * Nothing is a hardcoded colour, so it survives a theme swap mid-prompt.
+// The countdown is a ring rather than a bar because the auto-deny is the one
+// thing here that must never be missed: a prompt that expires in silence
+// teaches people the mechanism is unreliable.
 Item {
   id: root
 
-  // { id, tool, capability, scope, target, reasons[], principal, severity }
   property var request: null
   property int queueDepth: 0
-  // Seconds the server will wait before treating silence as a denial.
   property int timeoutSec: 120
   property int remainingSec: 0
 
@@ -41,26 +31,33 @@ Item {
   readonly property bool destructive: request && String(request.severity || "") === "destructive"
   readonly property string principal: request ? String(request.principal || "claude") : ""
 
-  // Danger recolours the whole card, not just a label.
   readonly property color tone: destructive ? Theme.danger : Theme.authAccent
   readonly property color edge: destructive ? Theme.authBorderError : Theme.authBorder
 
   readonly property real fraction: timeoutSec > 0 ? Math.max(0, Math.min(1, remainingSec / timeoutSec)) : 0
-  // Only start nagging in the last quarter; before that the countdown is
-  // information, not pressure.
   readonly property bool urgentClock: fraction > 0 && fraction < 0.25
 
-  function answer(verdict) {
-    if (!root.active) return
-    root.answered(verdict)
+  function answer(verdict) { if (root.active) root.answered(verdict) }
+
+  onActiveChanged: {
+    if (active) { root.remainingSec = root.timeoutSec; reveal.restart() }
+    else reveal.stop()
   }
 
-  onActiveChanged: if (active) root.remainingSec = root.timeoutSec
+  // Drives the staggered entrance. One clock for the whole card keeps the
+  // pieces in lockstep instead of each animating on its own schedule.
+  property real revealT: 0
+  NumberAnimation {
+    id: reveal
+    target: root; property: "revealT"
+    from: 0; to: 1; duration: 460; easing.type: Easing.OutCubic
+  }
+  function stagger(at, span) {
+    return Math.max(0, Math.min(1, (root.revealT - at) / span))
+  }
 
   Timer {
-    interval: 1000
-    repeat: true
-    running: root.active
+    interval: 1000; repeat: true; running: root.active
     onTriggered: if (root.remainingSec > 0) root.remainingSec--
   }
 
@@ -77,77 +74,101 @@ Item {
     Rectangle {
       anchors.fill: parent
       color: Theme.authScrim
-      opacity: root.active ? 1 : 0
-      Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
+      opacity: root.revealT
     }
 
-    BorderSurface {
-      id: card
-      width: Math.min(Style.space(560), parent.width - Style.gapsOut * 2)
-      height: Math.min(content.implicitHeight + Style.spacing.panelPadding * 2,
+    Item {
+      id: cardWrap
+      width: Math.min(Style.space(600), parent.width - Style.gapsOut * 2)
+      height: Math.min(body.implicitHeight + Style.spacing.panelPadding * 2,
                        parent.height - Style.gapsOut * 2)
       anchors.centerIn: parent
-      radius: Style.cornerRadius
-      color: Theme.authBackground
-      borderSpec: Border.surfaceSpec("polkit",
-                                     root.destructive ? "border-error" : "border",
-                                     root.edge,
-                                     Math.max(1, Style.space(2)),
-                                     "border-alpha")
+      opacity: root.revealT
+      transform: Translate { y: (1 - root.revealT) * Style.space(14) }
 
-      // Rises slightly as it appears. Enough to register as "this arrived",
-      // not enough to make you wait for it.
-      opacity: root.active ? 1 : 0
-      scale: root.active ? 1 : 0.97
-      Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
-      Behavior on scale { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
+      // Bloom behind the card. Subtle: it should register as depth, not as a
+      // light source. Tinted with the state colour so a destructive prompt
+      // carries its warning even in peripheral vision.
+      MultiEffect {
+        anchors.fill: plate
+        source: plate
+        shadowEnabled: true
+        shadowColor: Util.alpha(root.tone, root.destructive ? 0.85 : 0.6)
+        shadowBlur: 1.0
+        shadowScale: 1.04
+        shadowVerticalOffset: 0
+        shadowHorizontalOffset: 0
+        opacity: 0.9
+      }
+
+      Rectangle {
+        id: plate
+        anchors.fill: parent
+        radius: Style.cornerRadius
+        color: Theme.authBackground
+      }
+
+      HudScanlines {
+        anchors.fill: parent
+        color: Theme.authText
+        opacity: root.stagger(0.1, 0.5)
+      }
+
+      // A lit edge along the top. Reads as the surface being powered rather
+      // than drawn, and gives the eye somewhere to land before the title.
+      HudRail {
+        anchors.top: parent.top
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: Style.space(1)
+        color: root.tone
+        thickness: Math.max(2, Style.space(2))
+        sweep: root.active
+        sweepDuration: root.destructive ? 1500 : 3000
+        opacity: root.stagger(0.05, 0.35)
+      }
+
+      HudFrame {
+        anchors.fill: parent
+        color: root.edge
+        progress: root.stagger(0.0, 0.55)
+      }
 
       Column {
-        id: content
+        id: body
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.top: parent.top
         anchors.margins: Style.spacing.panelPadding
         spacing: Style.spacing.xl
 
-        // ---- countdown to auto-deny
-        Rectangle {
-          width: parent.width
-          height: Style.space(3)
-          radius: height / 2
-          color: Util.alpha(Theme.authText, 0.12)
-
-          Rectangle {
-            width: parent.width * root.fraction
-            height: parent.height
-            radius: parent.radius
-            color: root.urgentClock ? Theme.danger : root.tone
-            Behavior on width { NumberAnimation { duration: 1000; easing.type: Easing.Linear } }
-            Behavior on color { ColorAnimation { duration: Theme.fast } }
-          }
-        }
-
-        // ---- header
+        // ---- header: ring, title, principal
         Row {
           width: parent.width
-          spacing: Style.spacing.xl
+          spacing: Style.spacing.xxl
+          opacity: root.stagger(0.15, 0.4)
 
-          Text {
+          HudRing {
             anchors.verticalCenter: parent.verticalCenter
-            text: root.principal === "voice" ? "󰔞" : "󰂽"
-            color: root.tone
-            font.family: Style.font.family
-            font.pixelSize: Style.font.displayLarge
+            value: root.fraction
+            color: root.urgentClock ? Theme.danger : root.tone
+            label: root.remainingSec > 0 ? String(root.remainingSec) : ""
+            fontFamily: Style.font.family
           }
 
           Column {
             anchors.verticalCenter: parent.verticalCenter
-            width: parent.width - Style.space(52)
-            spacing: Style.spacing.xxs
+            width: parent.width - Style.space(46) - Style.spacing.xxl
+            spacing: Style.spacing.xs
+
+            HudLabel {
+              text: root.principal === "voice" ? "voice request" : "agent request"
+              tone: Theme.authText
+            }
 
             Text {
               width: parent.width
-              text: root.destructive ? "This cannot be undone" : "Desktop Agent wants permission"
+              text: root.destructive ? "This cannot be undone" : "Permission needed"
               color: root.destructive ? Theme.authTextError : Theme.authText
               font.family: Style.font.family
               font.pixelSize: Style.font.heading
@@ -163,16 +184,23 @@ Item {
               color: Theme.authTextSecondary
               font.family: Style.font.family
               font.pixelSize: Style.font.caption
+              elide: Text.ElideRight
             }
           }
         }
 
-        Rectangle { width: parent.width; height: 1; color: Util.alpha(Theme.authText, 0.14) }
+        HudRail {
+          width: parent.width
+          color: root.tone
+          sweep: root.active && !root.destructive
+          opacity: root.stagger(0.25, 0.35)
+        }
 
         // ---- what is being asked for
         Column {
           width: parent.width
           spacing: Style.spacing.sm
+          opacity: root.stagger(0.3, 0.4)
 
           Text {
             width: parent.width
@@ -187,7 +215,7 @@ Item {
           Text {
             width: parent.width
             text: root.request ? String(root.request.target || "") : ""
-            color: Theme.authTextSecondary
+            color: root.tone
             font.family: Style.font.family
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.Wrap
@@ -195,53 +223,59 @@ Item {
           }
         }
 
-        // ---- why the policy stopped, rather than a black box to approve
+        // ---- why, as a readout
         Column {
           width: parent.width
-          spacing: Style.spacing.xxs
+          spacing: Style.spacing.xs
           visible: root.request && root.request.reasons && root.request.reasons.length > 0
+          opacity: root.stagger(0.4, 0.4)
 
-          Text {
-            text: "WHY YOU ARE BEING ASKED"
-            color: Theme.authTextTertiary
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            font.bold: true
-            font.letterSpacing: 1
-          }
+          HudLabel { text: "why you are being asked"; tone: Theme.authText }
 
           Repeater {
             model: root.request && root.request.reasons ? root.request.reasons : []
-            Text {
-              width: content.width
-              text: "· " + modelData
-              color: Theme.authTextSecondary
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
-              wrapMode: Text.Wrap
+            Row {
+              width: body.width
+              spacing: Style.spacing.md
+
+              Rectangle {
+                width: Style.space(3); height: Style.space(3)
+                radius: width / 2
+                color: root.tone
+                anchors.verticalCenter: parent.verticalCenter
+                opacity: 0.7
+              }
+
+              Text {
+                width: body.width - Style.space(3) - Style.spacing.md
+                text: modelData
+                color: Theme.authTextSecondary
+                font.family: Style.font.family
+                font.pixelSize: Style.font.caption
+                wrapMode: Text.Wrap
+              }
             }
           }
         }
 
-        // ---- queue depth
         Text {
           width: parent.width
           visible: root.queueDepth > 1
-          text: (root.queueDepth - 1) + " more waiting behind this one"
+          text: "+" + (root.queueDepth - 1) + " more waiting"
           color: root.tone
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
+          opacity: root.stagger(0.45, 0.3)
         }
 
         // ---- actions
         Row {
           anchors.right: parent.right
           spacing: Style.spacing.controlGap
+          opacity: root.stagger(0.5, 0.4)
 
           Button {
-            text: root.remainingSec > 0 && root.urgentClock
-              ? "Deny  ·  " + root.remainingSec + "s"
-              : "Deny  Esc"
+            text: root.urgentClock ? "Deny  " + root.remainingSec + "s" : "Deny  Esc"
             foreground: Theme.danger
             accent: Theme.danger
             bordered: true
@@ -261,9 +295,8 @@ Item {
             onClicked: root.answer("allow")
           }
 
-          // Deliberately the quietest of the three. "Always" is the answer
-          // people reach for to make a prompt stop, and it is the one that
-          // should take the most intent to pick.
+          // Quietest of the three on purpose: "Always" is what people reach
+          // for to make a prompt stop, so it should take the most intent.
           Button {
             text: "Always  A"
             visible: !root.destructive
@@ -285,12 +318,11 @@ Item {
           font.family: Style.font.family
           font.pixelSize: Style.font.caption
           wrapMode: Text.Wrap
+          opacity: root.stagger(0.55, 0.3)
         }
       }
     }
 
-    // Keyboard is owned here rather than on a child so it keeps working no
-    // matter which button happens to hold focus.
     Item {
       anchors.fill: parent
       focus: window.visible

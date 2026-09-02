@@ -246,11 +246,11 @@ Item {
     voiceWatchdog.restart()
   }
 
+  // Preview mode is voxtype's business now; nothing here brokers audio. Kept
+  // as a stub so the HUD's commit/discard signals have somewhere to land if
+  // preview is reintroduced on top of voxtype.
   function voiceSend(verb) {
-    voiceCtlProc.command = ["bash", "-c",
-      "printf '%s' \"$1\" | socat - \"UNIX-CONNECT:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock\" >/dev/null 2>&1 || true",
-      "vc", verb]
-    voiceCtlProc.running = true
+    root.log("voice control ignored (voxtype owns capture): " + verb)
   }
 
   // --------------------------------------------------------------- recap
@@ -309,7 +309,10 @@ Item {
     command: ["bash", "-c",
       "[ -e \"$1\" ] && echo disabled || echo enabled; " +
       "[ -r \"$2\" ] && echo readable || echo unreadable; " +
-      "[ -S \"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock\" ] && echo voice-up || echo voice-down",
+      // Voice readiness is voxtype now, not a socket of our own. This still
+      // asked about desktop-agent-voice.sock long after that daemon was
+      // deleted, so the panel reported "offline" on a perfectly working setup.
+      "command -v voxtype >/dev/null && echo voice-up || echo voice-down",
       "probe", root.disabledFlag, root.policyPath]
     stdout: SplitParser {
       onRead: function(line) {

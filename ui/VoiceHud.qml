@@ -1,36 +1,30 @@
 import QtQuick
+import QtQuick.Effects
 import Quickshell
 import Quickshell.Wayland
 import qs.Commons
 import qs.Ui
 import "."
 
-// The thing you actually look at while dictating.
+// The readout you glance at while talking.
 //
-// It sits just above the bar, centred, and it is deliberately small: you are
-// looking at the window you are dictating INTO, not at this. Its whole job is
-// to answer three questions without being read -- is it hearing me, is it
-// still working, and what did it think I said.
+// Small on purpose: you are looking at the window you are dictating INTO, not
+// at this. Its job is to answer three things without being read -- is it
+// hearing me, is it still working, what did it think I said -- so the state
+// lives in colour and motion rather than in words.
 //
-// It does not take keyboard focus in any state except `preview`, where it has
-// to, because it is asking you to press Enter. A HUD that steals focus while
-// you are mid-sentence in another window is worse than no HUD.
+// Takes keyboard focus in exactly one state, `preview`, where it has to
+// because it is asking for a keystroke. A HUD that steals focus mid-sentence
+// is worse than no HUD.
 Item {
   id: root
 
-  // idle | listening | transcribing | preview | done | error
-  // Named "phase", not "state": Item already defines a string `state` for QML
-  // state machines, and redeclaring it is a load-time error.
   property string phase: "idle"
-  // dictate | command
   property string mode: "dictate"
   property string transcript: ""
   property string errorText: ""
-  // Matched intent in command mode, "" when nothing matched.
   property string matchedIntent: ""
-  // 0..1 audio levels, newest last. Fed by the voice daemon.
   property var levels: []
-  // Rough seconds of speech captured so far, shown while listening.
   property real elapsed: 0
 
   signal commit()
@@ -42,6 +36,7 @@ Item {
   readonly property bool commanding: mode === "command"
 
   readonly property color tone: failed ? Theme.danger
+    : phase === "done" ? Theme.ok
     : commanding ? Theme.caution
     : Theme.ok
 
@@ -54,10 +49,10 @@ Item {
 
   readonly property string caption: {
     if (failed) return errorText !== "" ? errorText : "Didn't catch that"
-    if (phase === "listening") return commanding ? "Listening for a command" : "Listening"
-    if (phase === "transcribing") return "Transcribing"
-    if (phase === "preview") return "Enter to insert · Esc to discard"
-    if (phase === "done") return commanding && matchedIntent !== "" ? matchedIntent : "Inserted"
+    if (phase === "listening") return commanding ? "listening for a command" : "listening"
+    if (phase === "transcribing") return matchedIntent !== "" ? matchedIntent : "transcribing"
+    if (phase === "preview") return "enter to insert · esc to discard"
+    if (phase === "done") return commanding && matchedIntent !== "" ? matchedIntent : "inserted"
     return ""
   }
 
@@ -66,60 +61,69 @@ Item {
     visible: root.active
     anchors { bottom: true; left: true; right: true }
     margins.bottom: Style.bar.sizeHorizontal + Style.gapsOut * 3
-    implicitHeight: card.implicitHeight + Style.space(8)
+    implicitHeight: card.implicitHeight + Style.space(30)
     color: "transparent"
     WlrLayershell.namespace: "omarchy-desktop-agent-voice"
-    WlrLayershell.layer: WlrLayer.Overlay
-    // Focus only where it is actually needed. Everywhere else this is a
-    // read-only readout and must not intercept a keystroke.
     WlrLayershell.keyboardFocus: root.phase === "preview"
-      ? WlrKeyboardFocus.Exclusive
-      : WlrKeyboardFocus.None
+      ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
+    WlrLayershell.layer: WlrLayer.Overlay
     exclusionMode: ExclusionMode.Ignore
 
-    BorderSurface {
+    Item {
       id: card
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.bottom: parent.bottom
-      width: Math.min(Math.max(Style.space(300), body.implicitWidth + Style.spacing.popupPadding * 2),
+      anchors.bottomMargin: Style.space(8)
+      width: Math.min(Math.max(Style.space(320), inner.implicitWidth + Style.spacing.popupPadding * 2),
                       parent.width - Style.gapsOut * 4)
-      implicitHeight: body.implicitHeight + Style.spacing.popupPadding * 2
-      radius: Style.cornerRadius
-      color: Theme.cardBackground
-      borderSpec: Border.surfaceSpec("popups", "border", root.tone,
-                                     Math.max(1, Style.normalBorderWidth), "border-alpha")
+      implicitHeight: inner.implicitHeight + Style.spacing.popupPadding * 2
 
       opacity: root.active ? 1 : 0
-      // Comes up from the bar rather than fading in place -- the motion says
-      // "this belongs to the bar" without needing a label.
-      transform: Translate { y: root.active ? 0 : Style.space(10) }
+      transform: Translate { y: root.active ? 0 : Style.space(12) }
       Behavior on opacity { NumberAnimation { duration: Theme.fast; easing.type: Easing.OutCubic } }
 
+      MultiEffect {
+        anchors.fill: plate
+        source: plate
+        shadowEnabled: true
+        shadowColor: Util.alpha(root.tone, root.listening ? 0.7 : 0.45)
+        shadowBlur: 1.0
+        shadowScale: 1.03
+        Behavior on shadowColor { ColorAnimation { duration: Theme.normal } }
+      }
+
+      Rectangle {
+        id: plate
+        anchors.fill: parent
+        radius: Style.cornerRadius
+        color: Theme.cardBackground
+      }
+
+      HudScanlines { anchors.fill: parent; color: Theme.cardText }
+      HudFrame { anchors.fill: parent; color: root.tone }
+
       Row {
-        id: body
+        id: inner
         anchors.centerIn: parent
         width: parent.width - Style.spacing.popupPadding * 2
         spacing: Style.spacing.xl
 
-        // ---- state glyph, pulsing only while it is actually hearing you
+        // ---- state glyph with a breathing halo while it hears you
         Item {
-          width: Style.space(26)
-          height: Style.space(26)
+          width: Style.space(28); height: Style.space(28)
           anchors.verticalCenter: parent.verticalCenter
 
           Rectangle {
             anchors.centerIn: parent
-            width: parent.width
-            height: parent.height
+            width: parent.width; height: parent.height
             radius: width / 2
-            color: Util.alpha(root.tone, 0.16)
+            color: Util.alpha(root.tone, 0.18)
             visible: root.listening
-
             SequentialAnimation on scale {
               running: root.listening
               loops: Animation.Infinite
-              NumberAnimation { from: 0.85; to: 1.15; duration: 900; easing.type: Easing.InOutQuad }
-              NumberAnimation { from: 1.15; to: 0.85; duration: 900; easing.type: Easing.InOutQuad }
+              NumberAnimation { from: 0.82; to: 1.18; duration: 880; easing.type: Easing.InOutQuad }
+              NumberAnimation { from: 1.18; to: 0.82; duration: 880; easing.type: Easing.InOutQuad }
             }
           }
 
@@ -129,7 +133,6 @@ Item {
             color: root.tone
             font.family: Style.font.family
             font.pixelSize: Style.font.icon
-
             RotationAnimator on rotation {
               running: root.phase === "transcribing"
               loops: Animation.Infinite
@@ -139,14 +142,15 @@ Item {
         }
 
         Column {
-          width: parent.width - Style.space(26) - Style.spacing.xl
+          width: parent.width - Style.space(28) - Style.spacing.xl
           anchors.verticalCenter: parent.verticalCenter
           spacing: Style.spacing.xs
 
-          // ---- live waveform, or the transcript once there is one
+          // ---- waveform, newest sample on the right so it reads
+          // left-to-right like the text it is about to become
           Item {
             width: parent.width
-            height: Style.space(22)
+            height: Style.space(24)
             visible: root.listening
 
             Row {
@@ -154,22 +158,21 @@ Item {
               spacing: Style.space(2)
 
               Repeater {
-                model: 28
+                model: 32
                 Rectangle {
-                  width: Style.space(3)
-                  radius: width / 2
-                  color: root.tone
-                  // Newest sample on the right, so it reads left-to-right like
-                  // the text it is about to become.
                   readonly property real level: {
                     var l = root.levels
                     if (!l || l.length === 0) return 0
-                    var i = l.length - 28 + index
+                    var i = l.length - 32 + index
                     return i >= 0 && i < l.length ? Math.max(0, Math.min(1, l[i])) : 0
                   }
-                  height: Style.space(3) + level * Style.space(19)
+                  width: Style.space(3)
+                  height: Style.space(3) + level * Style.space(21)
+                  radius: width / 2
                   anchors.verticalCenter: parent.verticalCenter
-                  opacity: 0.35 + level * 0.65
+                  // Bars brighten with level rather than only growing, so a
+                  // quiet room still looks alive instead of dead flat.
+                  color: Util.alpha(root.tone, 0.3 + level * 0.7)
                   Behavior on height { NumberAnimation { duration: 70 } }
                 }
               }
@@ -192,19 +195,16 @@ Item {
             width: parent.width
             spacing: Style.spacing.md
 
-            Text {
+            HudLabel {
               text: root.caption
-              color: root.failed ? Theme.danger : Theme.cardTextSecondary
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
+              tone: root.failed ? Theme.danger : Theme.cardText
+              color: root.failed ? Theme.danger : Util.alpha(Theme.cardText, 0.55)
             }
 
-            Text {
+            HudLabel {
               visible: root.listening && root.elapsed >= 1
               text: "· " + Math.floor(root.elapsed) + "s"
-              color: Theme.cardTextTertiary
-              font.family: Style.font.family
-              font.pixelSize: Style.font.caption
+              tone: Theme.cardText
             }
           }
         }
