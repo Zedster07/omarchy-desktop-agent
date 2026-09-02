@@ -146,6 +146,11 @@ must never reach the app search.
 
 An app that is not installed is refused by name rather than guessed at.
 
+Nothing here is configured or per-machine. The list is read from the XDG
+entry directories at use time, so it is whatever *that* user has installed,
+and it is re-read when those directories change — install an app and it is
+speakable immediately, with no restart and no registry to maintain.
+
 ## Other plugins can be spoken to
 
 There are over two thousand plugins on the marketplace and none of them can be

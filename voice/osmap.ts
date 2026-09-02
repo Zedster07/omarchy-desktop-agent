@@ -103,8 +103,13 @@ export function relevantCommands(phrase: string, all: OsCommand[], limit = 40): 
  * infers that `omarchy launch <anything>` works, and proposes
  * `omarchy launch whatsapp` -- which is not a command. Given the real list it
  * has no reason to invent one.
+ *
+ * The limit was 60, which sorted alphabetically cut off everything past "Q" --
+ * including WhatsApp, Signal, Slack, Steam, WezTerm, YouTube and Zoom. A
+ * truncated list is worse than none: the model cannot tell "not installed"
+ * from "not shown", so it invents. ~100 names is a few hundred tokens.
  */
-export function installedApps(limit = 60): string[] {
+export function installedApps(limit = 400): string[] {
   try {
     // Imported lazily: the OS map is also built in contexts with no need to
     // stat a hundred desktop files.

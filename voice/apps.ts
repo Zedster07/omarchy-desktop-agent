@@ -16,7 +16,7 @@
 // Omarchy's own launchers use, so an app started by voice lands in the same
 // systemd slice as one started from the menu.
 
-import { readdirSync, readFileSync, existsSync } from "node:fs"
+import { readdirSync, readFileSync, existsSync, statSync } from "node:fs"
 
 const HOME = process.env.HOME!
 const DIRS = [
@@ -35,7 +35,22 @@ export interface App {
   handlerOnly: boolean
 }
 
+// The list is read from the filesystem, so every machine gets its own without
+// anything being configured. The cache exists because scanning ~100 files on
+// every utterance is wasteful -- but it is invalidated by directory mtime,
+// which changes whenever an entry is added or removed.
+//
+// Caching it for the life of the process was a real bug: this runs as a
+// long-lived service, so an app installed after the daemon started would not
+// have been found until the next restart. Nobody would have connected those.
 let cache: App[] | null = null
+let cacheStamp = ""
+
+function stamp(): string {
+  return DIRS.map(d => {
+    try { return `${d}:${statSync(d).mtimeMs}` } catch { return `${d}:0` }
+  }).join("|")
+}
 
 function parse(path: string, file: string): App | null {
   let text: string
@@ -67,7 +82,9 @@ function parse(path: string, file: string): App | null {
 }
 
 export function listApps(): App[] {
-  if (cache) return cache
+  const now = stamp()
+  if (cache && now === cacheStamp) return cache
+  cacheStamp = now
   const seen = new Map<string, App>()
   for (const dir of DIRS) {
     if (!existsSync(dir)) continue
