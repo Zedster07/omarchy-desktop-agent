@@ -118,6 +118,9 @@ Worked examples of finishing rather than approaching:
 - "watch <video> on youtube" -> [["mpv", "ytdl://ytsearch1:<video>"]]
 - "open <app>" -> [["uwsm-app", "--", "<Name>.desktop"]]
 - "look up <thing>" -> [["xdg-open", "https://duckduckgo.com/?q=<thing>"]]
+- A service with no app installed is still reachable on the web. "open youtube
+  music and play something" -> [["xdg-open", "https://music.youtube.com/"]]
+  Not having a desktop entry is not a reason to give up on it.
 
 Request: "${phrase}"
 
@@ -156,6 +159,129 @@ If you cannot do it safely, reply {"steps": null, "reason": "<why>"}.`
   return {
     result: {
       steps,
+      explanation: String(json.explanation ?? "").slice(0, 200),
+      severity: json.severity === "destructive" ? "destructive" : "normal",
+      provider: provider.id,
+    },
+    provider: provider.id,
+  }
+}
+
+
+// ---------------------------------------------------------------- combined
+//
+// One call that either picks a registered command or writes new ones.
+//
+// route() and plan() used to run in sequence on a miss, which meant TWO round
+// trips -- about twenty seconds before anything happened. They also ask
+// overlapping questions: "is this one of these twelve?" and "what would you
+// run?" are the same judgement seen twice. Asking once halves the latency and
+// removes the case where routing picks a poor match and planning never gets
+// consulted.
+//
+// The registry is still preferred where it fits: a registered command is one
+// somebody wrote down on purpose, and its argv has been seen before.
+export interface Resolution {
+  kind: "intent" | "steps"
+  id?: string
+  slots?: Record<string, string>
+  steps?: string[][]
+  explanation: string
+  severity: "normal" | "destructive"
+  provider: string
+}
+
+export async function resolveRequest(
+  phrase: string, intents: Intent[], preference = "auto",
+): Promise<{ result: Resolution | null; provider: string | null; refusal?: string }> {
+  const provider = pickProvider(preference, "any")
+  if (!provider) return { result: null, provider: null }
+
+  const all = await loadOsCommands()
+  const routes = provider.kind === "agent" ? all : relevantCommands(phrase, all, 45)
+  const catalogue = routes
+    .map(c => `${c.route}${c.args ? " " + c.args : ""} — ${c.summary}`)
+    .join("\n")
+
+  const registry = intents.map(i => {
+    const slots = i.slots ? ` slots:${Object.keys(i.slots).join(",")}` : ""
+    return `${i.id} — ${i.description ?? i.id}${slots}`
+  }).join("\n")
+
+  const prompt = `Someone spoke this request to their Linux desktop (Arch, Hyprland, Wayland):
+
+"${phrase}"
+
+There is a list of ready-made commands. If one of them IS the request, use it.
+Otherwise write the commands to carry it out yourself.
+
+Ready-made commands:
+${registry}
+
+Omarchy CLI routes:
+${catalogue}
+
+Other programs installed: ${availableTools().join(", ")}
+
+Apps that can be opened by name (use: uwsm-app -- "<Name>.desktop"):
+${installedApps().join(", ")}
+
+Rules:
+- Commands run as argv arrays. There is NO shell: no pipes, redirects, globs, $(...) or ;.
+- Never use sudo, a shell, a package manager, or anything that deletes, moves or overwrites files.
+- FINISH the request. Do not stop at a step that merely gets close to it — opening a search page for something you were asked to play is not playing it.
+- To open an installed app use uwsm-app with its Desktop Entry ID. Do NOT use "omarchy launch <app>": that route exists for a fixed handful of names only.
+- A service with no app installed is still reachable on the web.
+- At most ${MAX_STEPS} steps.
+
+Examples:
+- "mute" -> {"kind":"intent","id":"audio.mute","slots":{}}
+- "go to the third workspace" -> {"kind":"intent","id":"workspace.switch","slots":{"n":"3"}}
+- "play <song> on youtube" -> {"kind":"steps","steps":[["mpv","--ytdl-format=bestaudio","ytdl://ytsearch1:<song>"]]}
+- "open youtube music and play something" -> {"kind":"steps","steps":[["xdg-open","https://music.youtube.com/"]]}
+
+Reply with JSON only, no prose and no code fence:
+{"kind":"intent","id":"<id from the list>","slots":{}}
+or
+{"kind":"steps","steps":[["program","arg"]],"explanation":"<one short sentence the user reads before approving>","severity":"normal"}
+Use "severity":"destructive" if anything closes, deletes or interrupts something.
+If you cannot do it safely, reply {"kind":"none","reason":"<why>"}.`
+
+  const raw = await ask(provider, prompt)
+  const json = extractJson(raw)
+  if (!json) return { result: null, provider: provider.id }
+
+  if (json.kind === "intent" && typeof json.id === "string") {
+    // Never trusted to stay inside the list.
+    if (!intents.some(i => i.id === json.id)) return { result: null, provider: provider.id }
+    const slots: Record<string, string> = {}
+    if (json.slots && typeof json.slots === "object") {
+      for (const [k, v] of Object.entries(json.slots)) {
+        if (typeof v === "string" || typeof v === "number") slots[k] = String(v)
+      }
+    }
+    return {
+      result: { kind: "intent", id: json.id, slots, explanation: "", severity: "normal", provider: provider.id },
+      provider: provider.id,
+    }
+  }
+
+  const rawSteps: unknown[] = Array.isArray(json.steps) ? json.steps
+    : Array.isArray(json.argv) ? [json.argv] : []
+  const steps: string[][] = []
+  for (const st of rawSteps.slice(0, MAX_STEPS)) {
+    if (Array.isArray(st) && st.length) steps.push(st.map((a: unknown) => String(a)))
+  }
+  if (steps.length === 0) return { result: null, provider: provider.id }
+
+  for (const step of steps) {
+    const verdict = checkProposedCommand(step)
+    if (!verdict.ok) return { result: null, provider: provider.id, refusal: verdict.reason }
+  }
+
+  return {
+    result: {
+      kind: "steps", steps,
       explanation: String(json.explanation ?? "").slice(0, 200),
       severity: json.severity === "destructive" ? "destructive" : "normal",
       provider: provider.id,

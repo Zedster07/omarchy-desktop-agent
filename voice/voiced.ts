@@ -20,7 +20,7 @@
 import { filterTranscript } from "./filter.ts"
 import { resolve } from "./intents.ts"
 import { loadIntents } from "./registry.ts"
-import { route, plan } from "./plan.ts"
+import { resolveRequest } from "./plan.ts"
 import { handOff, overlayReady } from "./agent.ts"
 import { setting, settingStr } from "./settings.ts"
 import { resolveTarget, listApps } from "./apps.ts"
@@ -310,76 +310,71 @@ async function runCommand(phrase: string) {
   let aiRouted: { provider: string } | null = null
   let aiProposal: { steps: string[][]; explanation: string; severity: string; provider: string } | null = null
 
-  const assist = await settingStr("ai.assist", "route")
+  // __launch__ is a placeholder the registry cannot fill: which argv opens an
+  // app depends on what is installed, so it is resolved here.
+  //
+  // If it does not resolve, the intent does not APPLY -- "open the discussion
+  // about workspaces" is not a launch request just because it starts with
+  // "open". Clearing the match lets the later tiers see the phrase instead of
+  // answering it with "no app called that", which was both wrong and a dead
+  // end.
+  if (match && match.argv[0] === "__launch__") {
+    const spoken = match.argv.slice(1).join(" ")
+    const t = resolveTarget(spoken)
+    if (t) {
+      match = { ...match, argv: t.argv,
+                intent: { ...match.intent, description: `Open ${t.name}` } }
+    } else {
+      match = null
+    }
+  }
+
+  const assist = await settingStr("ai.assist", "route+plan")
   const preference = await settingStr("ai.provider", "auto")
 
+  // ---- tier 2/3, in one call.
+  //
+  // The deterministic matcher is a fast path, not the product: it answers a
+  // registered phrase in under a millisecond and otherwise gets out of the
+  // way. Everything it does not recognise goes to the model, which either
+  // picks a registered command or writes new ones -- one round trip rather
+  // than asking two overlapping questions in sequence.
   if (!match && assist !== "off") {
     hud({ state: "transcribing", mode: "command", transcript: phrase, matched: "thinking…" })
-    const routed = await route(phrase, intents, preference)
-    if (routed.result) {
-      const target = intents.find(i => i.id === routed.result!.id)
-      if (target) {
-        const argv = target.run.map(part => part.replace(/\{(\w+)\}/g, (whole, k) =>
-          Object.prototype.hasOwnProperty.call(routed.result!.slots, k)
-            ? routed.result!.slots[k] : whole))
-        match = { intent: target, slots: routed.result.slots, score: 1, argv }
-        aiRouted = { provider: routed.provider ?? "ai" }
-      }
-    }
-  }
-
-  if (!match && assist === "route+plan") {
-    const planned = await plan(phrase, preference)
-    if (planned.refusal) { await clearHud({ state: "error", mode: "command", transcript: phrase, errorText: planned.refusal }, 3600); return }
-    if (planned.result) aiProposal = planned.result
-  }
-
-  // ---- tier 4: nothing is expressible as commands, so hand it to an agent
-  // that can look at the screen. Opt-in, and gated by the desktop policy the
-  // whole way through rather than by anything decided here.
-  if (!match && !aiProposal && assist === "route+plan+agent") {
-    const target = await settingStr("agent.overlayTarget", "io.github.zedster07.desktop-agent")
-    if (!(await overlayReady(target))) {
+    const r = await resolveRequest(phrase, intents, preference)
+    if (r.refusal) {
       await clearHud({ state: "error", mode: "command", transcript: phrase,
-        errorText: "Agent needs the desktop policy plugin loaded" }, 3200)
+                       errorText: r.refusal }, 3600)
       return
     }
-
-    hud({ state: "transcribing", mode: "command", transcript: phrase,
-          matched: "handing to the agent…" })
-    const t0 = Date.now()
-    const res = await handOff(phrase, {
-      workspace: Number(await settingStr("agent.workspace", "10")),
-      onProgress: () => hud({ state: "transcribing", mode: "command", transcript: phrase,
-                              matched: `agent working · ${Math.round((Date.now() - t0) / 1000)}s` }),
-    })
-    audit(`agent "${phrase}" -> ${res.ok ? "ok" : "failed"}: ${res.summary}`)
-    await clearHud(res.ok
-      ? { state: "done", mode: "command", transcript: phrase, matched: res.summary }
-      : { state: "error", mode: "command", transcript: phrase, errorText: res.summary },
-      res.ok ? 4000 : 3600)
-    return
+    if (r.result?.kind === "intent") {
+      const target = intents.find(i => i.id === r.result!.id)
+      if (target) {
+        const slots = r.result.slots ?? {}
+        let argv = target.run.map(part => part.replace(/\{(\w+)\}/g, (whole, k) =>
+          Object.prototype.hasOwnProperty.call(slots, k) ? slots[k] : whole))
+        // A routed launch still has to resolve to something installed.
+        if (argv[0] === "__launch__") {
+          const t = resolveTarget(argv.slice(1).join(" "))
+          if (t) argv = t.argv
+          else argv = []
+        }
+        if (argv.length) {
+          match = { intent: target, slots, score: 1, argv }
+          aiRouted = { provider: r.provider ?? "ai" }
+        }
+      }
+    } else if (r.result?.kind === "steps") {
+      aiProposal = {
+        steps: r.result.steps!, explanation: r.result.explanation,
+        severity: r.result.severity, provider: r.result.provider,
+      }
+    }
   }
 
   if (!match && !aiProposal) {
     await clearHud({ state: "error", mode: "command", transcript: phrase, errorText: "No command matched" }, 2400)
     return
-  }
-
-  // __launch__ is a placeholder the registry cannot fill: which argv opens an
-  // app depends on what is installed, so it is resolved here against the real
-  // desktop entries. Refusing beats guessing -- `omarchy launch whatsapp` was
-  // a guess, and it was simply not a command.
-  if (match && match.argv[0] === "__launch__") {
-    const spoken = match.argv.slice(1).join(" ")
-    const t = resolveTarget(spoken)
-    if (!t) {
-      await clearHud({ state: "error", mode: "command", transcript: phrase,
-                       errorText: `No app called "${spoken}"` }, 2600)
-      return
-    }
-    match = { ...match, argv: t.argv,
-              intent: { ...match.intent, description: `Open ${t.name}` } }
   }
 
   let target: any = null

@@ -11,7 +11,7 @@ const PATH = `${HOME}/.config/desktop-agent/settings.json`
 const DEFAULTS: Record<string, unknown> = {
   "voice.sttMode": "local",
   "voice.biasPrompt": true,
-  "ai.assist": "route",
+  "ai.assist": "route+plan",
   "ai.provider": "auto",
   "ai.localModel": "llama3.2:3b",
   "command.enabled": true,

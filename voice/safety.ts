@@ -61,12 +61,26 @@ export function checkProposedCommand(argv: string[]): Allowed | Refusal {
   }
 
   // Commands are exec'd as argv with no shell, so metacharacters are literal
-  // rather than dangerous. They are still a strong sign the model believed it
-  // was writing a shell line, which means the rest of its output should not be
-  // trusted either.
+  // rather than dangerous. They are still a sign the model believed it was
+  // writing a shell line, which means the rest of its output is suspect.
+  //
+  // But only the COMPOSITION operators are that sign. A bare "&" is how every
+  // URL separates query parameters, and rejecting those refused a perfectly
+  // ordinary `xdg-open https://…?list=x&index=1` with "contains shell syntax"
+  // -- a safety rule firing on the safest thing in the request.
+  // A semicolon FOLLOWED by whitespace is the shell-composition shape. The
+  // earlier form required whitespace before it too, so "x.com; rm -rf ~" slipped
+  // past -- there is no space before that semicolon. Real URLs do not contain
+  // "; " at all.
+  const SHELL_COMPOSITION = /&&|\|\||`|\$\(|>>|<<|;\s|;$/
   for (const a of argv) {
     if (typeof a !== "string") return { ok: false, reason: "malformed argument", token: "" }
-    if (/[;&|`]|\$\(|>>|<</.test(a)) {
+    // A URL is a single argv element and cannot be anything but data here --
+    // but only if it is actually a URL. Real ones contain no whitespace, so
+    // requiring that keeps the exemption from covering
+    // "https://x.com; rm -rf ~", which is inert but is nobody's real link.
+    if (/^https?:\/\/\S+$/i.test(a) && !/\s/.test(a)) continue
+    if (SHELL_COMPOSITION.test(a)) {
       return { ok: false, token: a.slice(0, 40),
                reason: "the proposal contains shell syntax, so it was not written as a plain command" }
     }

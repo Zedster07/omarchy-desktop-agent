@@ -62,8 +62,17 @@ const NUMBER_WORDS: Record<string, number> = {
 // without needing a template for every phrasing.
 const FILLER = new Set([
   "please", "could", "would", "you", "can", "the", "a", "an", "my",
-  "just", "now", "uh", "um", "hey", "ok", "okay", "and", "then",
+  "just", "now", "uh", "um", "hey", "ok", "okay",
 ])
+
+// Words that start a SECOND request. Deliberately not filler.
+//
+// "and" and "then" used to be stripped as noise, which meant a greedy text
+// slot ran straight through the clause boundary: "open youtube music and play
+// a random playlist" bound app="youtube music play random playlist", fuzzy
+// matched it to YouTube, launched, and stopped -- one intent answering half a
+// sentence, with the tiers that could have done the whole thing never reached.
+const CLAUSE_BREAK = new Set(["and", "then", "also", "after", "afterwards", "plus"])
 
 export function normalize(s: string): string {
   return String(s ?? "")
@@ -135,11 +144,16 @@ function matchTemplate(
       // A text slot is greedy to the end; typed slots consume one token.
       const spec = slots?.[slotName]
       if (spec?.type === "text") {
-        const rest = words.slice(wi).join(" ")
-        if (rest === "") return null
-        bound[slotName] = rest
-        matched += words.length - wi
-        wi = words.length
+        // A text slot is greedy, but only to the end of THIS clause. What
+        // follows a clause break belongs to a second request, and leaving it
+        // as leftover is what drops the score enough for the match to be
+        // rejected and the phrase escalated.
+        let end = wi
+        while (end < words.length && !CLAUSE_BREAK.has(words[end])) end++
+        if (end === wi) return null
+        bound[slotName] = words.slice(wi, end).join(" ")
+        matched += end - wi
+        wi = end
         pi++
         continue
       }

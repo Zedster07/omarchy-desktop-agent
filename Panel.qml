@@ -623,24 +623,24 @@ Panel {
               label: "assistance"
               fontFamily: root.fontFamily
               help: {
-                var v = root.s("ai.assist", "route")
+                var v = root.s("ai.assist", "route+plan")
                 if (v === "off") return "Only phrases in the command list work."
-                if (v === "route") return "When nothing matches, an AI picks from the same list. It can recognise a new wording but cannot invent an action."
-                if (v === "route+plan") return "Also lets it write new commands for requests the list does not cover — playing a song, opening a URL. Always shown for approval first."
+                if (v === "route") return "When nothing matches, an AI picks from the ready-made list. It can recognise a new wording but cannot write a new command."
+                if (v === "route+plan") return "The normal setting. Registered phrases answer instantly; everything else goes to an AI that either picks a ready-made command or writes the commands itself, shown for approval first."
                 return "Also hands anything that is not expressible as commands to an agent that can see and click the screen. Every action it takes goes through your desktop policy, and a denial stops it."
               }
               Dropdown {
                 width: parent.width
                 showLabel: false
                 options: ["off", "route", "route+plan", "route+plan+agent"]
-                value: root.s("ai.assist", "route")
+                value: root.s("ai.assist", "route+plan")
                 onChanged: function(v) { root.setCfg("ai.assist", v) }
               }
             }
 
             SettingRow {
               width: parent.width
-              visible: root.s("ai.assist", "route") !== "off"
+              visible: root.s("ai.assist", "route+plan") !== "off"
               label: "provider"
               fontFamily: root.fontFamily
               help: "auto prefers an installed CLI agent and falls back to a local Ollama model. Only providers found on this machine are used."
@@ -655,7 +655,7 @@ Panel {
 
             SettingRow {
               width: parent.width
-              visible: root.s("ai.assist", "route") !== "off"
+              visible: root.s("ai.assist", "route+plan") !== "off"
               label: "confirm spoken commands"
               fontFamily: root.fontFamily
               help: "Anything an AI decided always asks, whatever this says."
@@ -670,7 +670,7 @@ Panel {
 
             SettingRow {
               width: parent.width
-              visible: root.s("ai.assist", "route") !== "off"
+              visible: root.s("ai.assist", "route+plan") !== "off"
               label: "agent workspace"
               fontFamily: root.fontFamily
               help: "Anything the agent opens lands here, placed silently so it never steals your focus. Set 0 to let it open wherever it likes. This is placement, not permission — what it may touch is the policy's business."
@@ -684,7 +684,7 @@ Panel {
 
             Toggle {
               width: parent.width
-              visible: root.s("ai.assist", "route") !== "off"
+              visible: root.s("ai.assist", "route+plan") !== "off"
               label: "Let other plugins register commands"
               description: "Each plugin is approved once before its voice commands go live."
               checked: root.s("command.thirdParty", true)
