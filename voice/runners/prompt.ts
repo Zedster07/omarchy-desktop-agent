@@ -1,3 +1,4 @@
+import { asContext } from "../history.ts"
 export function taskPrompt(phrase: string, workspace: number): string {
   // Placement is enforced by the MCP server now, not requested here.
   //
@@ -12,7 +13,7 @@ export function taskPrompt(phrase: string, workspace: number): string {
   return `You are driving a Linux desktop on behalf of someone who spoke this request out loud:
 
 "${phrase}"
-
+${asContext()}
 You have desktop tools: screenshot, click, type, key, run, window and workspace
 control. Use them to carry the request out.
 

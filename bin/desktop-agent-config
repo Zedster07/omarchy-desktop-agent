@@ -249,6 +249,27 @@ def install_local(model):
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "all"
 
+    if cmd == "forget":
+        # Clear the conversational memory. Not a setting -- an action, because
+        # "forget what I just said" is a thing people want immediately and
+        # should not have to find in a menu.
+        path = os.path.expanduser("~/.local/state/desktop-agent/history.jsonl")
+        try:
+            open(path, "w").close()
+            print("forgotten")
+        except OSError as e:
+            print(f"could not clear history: {e}")
+            return 1
+        return 0
+
+    if cmd == "history":
+        path = os.path.expanduser("~/.local/state/desktop-agent/history.jsonl")
+        try:
+            print(open(path).read().rstrip() or "(empty)")
+        except OSError:
+            print("(empty)")
+        return 0
+
     if cmd == "policy-yolo":
         # Does the POLICY permit a lease at all?
         #

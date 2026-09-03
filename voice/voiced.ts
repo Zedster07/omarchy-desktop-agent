@@ -22,6 +22,7 @@ import { resolve } from "./intents.ts"
 import { loadIntents } from "./registry.ts"
 import { resolveRequest } from "./plan.ts"
 import { handOff, overlayReady, stopAgent } from "./agent.ts"
+import { remember, asContext } from "./history.ts"
 import { setting, settingStr } from "./settings.ts"
 import { resolveTarget, listApps } from "./apps.ts"
 import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs"
@@ -344,6 +345,7 @@ async function runAgent(phrase: string, why: string) {
 
   const out = await handOff(phrase, { workspace, onProgress: tick })
   log(`agent: ${out.ok ? "done" : "failed"} — ${out.summary}`)
+  remember(phrase, out.ok ? out.summary : `failed: ${out.summary}`, "agent")
 
   // Leave the report somewhere it can be read.
   //
@@ -423,6 +425,7 @@ async function runCommand(phrase: string) {
     const r = await resolveRequest(phrase, intents, preference, assist.includes("agent"))
     log(`resolve: kind=${r.result?.kind ?? "none"} provider=${r.provider ?? "-"}${r.refusal ? " refusal=" + r.refusal : ""}`)
     if (r.refusal) {
+      remember(phrase, `refused: ${r.refusal}`, "refused")
       await clearHud({ state: "error", mode: "command", transcript: phrase,
                        errorText: r.refusal }, 3600)
       return
@@ -456,6 +459,7 @@ async function runCommand(phrase: string) {
   }
 
   if (!match && !aiProposal) {
+    remember(phrase, "nothing matched, so nothing ran", "refused")
     await clearHud({ state: "error", mode: "command", transcript: phrase, errorText: "No command matched" }, 2400)
     return
   }

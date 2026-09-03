@@ -17,6 +17,7 @@ import type { Intent } from "./intents.ts"
 import { ask, pickProvider, extractJson, type Provider } from "./ai.ts"
 import { loadOsCommands, relevantCommands, availableTools, installedApps } from "./osmap.ts"
 import { checkProposedCommand } from "./safety.ts"
+import { asContext } from "./history.ts"
 
 export interface RouteResult { id: string; slots: Record<string, string> }
 export interface PlanResult {
@@ -211,7 +212,7 @@ export async function resolveRequest(
   const prompt = `Someone spoke this request to their Linux desktop (Arch, Hyprland, Wayland):
 
 "${phrase}"
-
+${asContext()}
 There is a list of ready-made commands. If one of them IS the request, use it.
 Otherwise write the commands to carry it out yourself.
 

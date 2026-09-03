@@ -6,6 +6,7 @@
 // human takes to answer an approval prompt, and the hook cannot.
 
 import { settingStr } from "./settings.ts"
+import { remember } from "./history.ts"
 import type { Intent } from "./intents.ts"
 import { appendFileSync, mkdirSync, readFileSync} from "node:fs"
 import { onWorkspace, isLaunch, DEFAULT_WORKSPACE } from "./workspace.ts"
@@ -212,6 +213,7 @@ if (needsApproval) {
 
   if (verdict !== "allow" && verdict !== "always") {
     audit(`${intent.id} cmd:${argv.join(" ")} -> denied (${verdict || "timeout"})`)
+    remember(phrase, `you denied: ${argv.join(" ")}`, "refused")
     await finish({ state: "error", errorText: verdict === "gone" ? "Cancelled" : "Denied" }, 1400)
   }
 }
@@ -266,13 +268,22 @@ for (let i = 0; i < plan.length; i++) {
 
 const label = `${intent.id}${aiProposed ? `(plan:${aiProposed.provider})` : aiRouted ? `(route:${aiRouted.provider})` : ""}`
 
+// What ran, recorded as one line, so the next sentence can say "it".
+//
+// The COMMAND is what gets remembered, not the intent id: "audio.volume" tells
+// a follow-up nothing, while "wpctl set-volume @DEFAULT_AUDIO_SINK@ 0.4" says
+// what state the machine is in and lets "a bit louder" mean something.
+const ran = plan.map(c => c.join(" ")).join(" && ")
+
 if (failedAt < 0) {
-  audit(`${label} cmd:${plan.map(c => c.join(" ")).join(" && ")} -> ok`)
+  audit(`${label} cmd:${ran} -> ok`)
+  remember(phrase, `ran: ${ran}`, aiProposed ? "command" : "match")
   await finish({ state: "done", mode: "command", transcript: phrase,
                  matched: intent.description || intent.id })
 } else {
   const which = plan.length > 1 ? ` (step ${failedAt + 1} of ${plan.length})` : ""
   audit(`${label} cmd:${plan[failedAt].join(" ")} -> failed${which} ${detail}`)
+  remember(phrase, `tried "${plan[failedAt].join(" ")}" and it failed: ${detail || "no detail"}`, "command")
   await finish({ state: "error", mode: "command",
                  errorText: (detail || "Command failed") + which }, 2800)
 }
