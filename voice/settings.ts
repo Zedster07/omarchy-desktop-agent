@@ -21,11 +21,20 @@ const DEFAULTS: Record<string, unknown> = {
   "policy.recap": true,
 }
 
+// Keyed on the file's mtime, not cached forever. The daemon is long-lived and
+// the panel writes this file underneath it, so a plain `if (cache) return
+// cache` meant every settings change silently did nothing until the daemon was
+// restarted -- the panel would appear to work and change no behaviour. Same
+// bug the app cache had.
 let cache: any = null
+let cachedAt = -1
 
 async function load(): Promise<any> {
-  if (cache) return cache
+  let mtime = 0
+  try { mtime = (await Bun.file(PATH).stat()).mtimeMs } catch {}
+  if (cache && mtime === cachedAt) return cache
   try { cache = await Bun.file(PATH).json() } catch { cache = {} }
+  cachedAt = mtime
   return cache
 }
 
