@@ -132,7 +132,11 @@ Add to ~/.config/hypr/bindings.lua:
     o.bind("SUPER + ESCAPE", "Cancel voice", "desktop-agent-listen cancel")
 
     -- Type a request instead of speaking it. Same pipeline behind it.
-    o.bind("SUPER + SLASH", "Command prompt",
+    --
+    -- SPACE, not a punctuation key: on a non-US layout "/" may need Shift and
+    -- may not be in the same place at all. Space is the same physical key
+    -- everywhere, and this sits beside the launcher on SUPER+SPACE.
+    o.bind("SUPER + SHIFT + SPACE", "Command prompt",
            "omarchy-shell shell call io.github.zedster07.desktop-agent prompt")
 
 Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:

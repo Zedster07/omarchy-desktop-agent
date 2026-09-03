@@ -86,10 +86,15 @@ silence never reaches it.
 **Speak it.** Hold `F9` to dictate into whatever has focus, `F10` to give a
 command.
 
-**Type it.** `SUPER + /` opens a prompt in the middle of the screen. Same
+**Type it.** `SUPER + SHIFT + SPACE` opens a prompt in the middle of the screen. Same
 tiers, same policy, same approval — the only difference is that it skipped the
 microphone. Useful when a name is hard to say, when the room is loud, or when
 you want to see the request before it runs.
+
+Every binding here is on a key whose physical position is the same on any
+layout — function keys, Escape, Space. Punctuation is not: `/` is Shift+: on
+AZERTY and elsewhere again on other layouts, so a plugin that binds it works
+only for the person who wrote it.
 
 ## Four tiers, escalating
 
