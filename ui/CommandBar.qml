@@ -8,20 +8,22 @@ import "."
 
 // Typing the same requests you would say.
 //
-// The voice HUD is radial because it is showing you something continuous --
-// your voice arriving. Text is a line, so this is a line: a single field in the
-// middle of the screen, the same brackets and bloom, and the same pipeline
-// behind it. Nothing here decides anything; it collects a sentence and hands it
-// to the daemon that already knows what to do with one.
+// It is one input and nothing else. Two earlier versions accumulated chrome --
+// the kit's TextField nested a bordered box inside the card's bordered box,
+// and bracket corners drew a frame around a thing that already had an edge.
+// Both were decoration competing with the only element that matters. What is
+// left is a single field: a caret, the text, and the state.
 //
-// It DOES take keyboard focus, unlike every other surface in this plugin --
-// obviously, since it is asking you to type. Escape gives it back.
+// It takes keyboard focus, which nothing else in this plugin does. Obviously:
+// it is asking you to type. Escape has to be handled on the item that HOLDS
+// that focus, or the event is consumed there and never reaches a parent.
+//
+// Every colour is a Theme token. Nothing here knows it is blue on tokyo-night.
 Item {
   id: root
 
   property bool open: false
-  // idle | working | done | error
-  property string phase: "idle"
+  property string phase: "idle"        // idle | working | done | error
   property string result: ""
 
   signal submitted(string text)
@@ -31,10 +33,12 @@ Item {
     : phase === "done" ? Theme.ok
     : Theme.caution
 
-  function show() { root.open = true; field.text = ""; root.phase = "idle"; root.result = ""; field.forceActiveFocus() }
-  function hide() { root.open = false; field.text = "" }
+  readonly property bool busy: phase === "working"
 
-  onOpenChanged: if (open) Qt.callLater(function() { field.forceActiveFocus() })
+  function show() { root.open = true; input.text = ""; root.phase = "idle"; root.result = "" }
+  function hide() { root.open = false; input.text = "" }
+
+  onOpenChanged: if (open) Qt.callLater(function() { input.forceActiveFocus() })
 
   PanelWindow {
     id: window
@@ -46,172 +50,175 @@ Item {
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
 
-    // Translucent so the compositor blur behind this layer has something to
-    // work through; an opaque fill would blur nothing.
+    // The theme's own dim, not black. A theme that dims toward its background
+    // -- or sets its own polkit scrim -- gets that here rather than a hole
+    // punched in the palette, and a light theme is not dimmed with soot.
     Rectangle {
       anchors.fill: parent
-      color: Qt.rgba(0, 0, 0, 1)
-      opacity: root.open ? 0.42 : 0
+      color: Theme.authScrim
+      opacity: root.open ? 1 : 0
       Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
     }
 
-    MouseArea {
-      anchors.fill: parent
-      onClicked: root.dismissed()
-    }
+    MouseArea { anchors.fill: parent; onClicked: root.dismissed() }
 
     Item {
       id: stage
-      anchors.centerIn: parent
-      width: Math.min(Style.space(760), parent.width - Style.gapsOut * 6)
-      height: card.implicitHeight
+      anchors.horizontalCenter: parent.horizontalCenter
+      // Slightly above centre. Dead centre puts it on top of whatever you were
+      // looking at; a third of the way up leaves that visible underneath.
+      y: parent.height * 0.34
+      width: Math.min(Style.space(720), parent.width - Style.gapsOut * 6)
+      height: Math.max(input.implicitHeight, caret.implicitHeight) + Style.spacing.huge * 2
 
       opacity: root.open ? 1 : 0
-      scale: root.open ? 1 : 0.96
-      transform: Translate { y: root.open ? 0 : Style.space(10) }
+      scale: root.open ? 1 : 0.97
       Behavior on opacity { NumberAnimation { duration: Theme.fast; easing.type: Easing.OutCubic } }
       Behavior on scale { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
 
+      // Offset downward so it reads as the card sitting ON the desktop rather
+      // than an even halo painted around it.
       MultiEffect {
         anchors.fill: plate
         source: plate
         shadowEnabled: true
-        shadowColor: Util.alpha(root.tone, 0.6)
+        shadowColor: Util.alpha(root.tone, root.busy ? 0.34 : 0.18)
         shadowBlur: 1.0
-        shadowScale: 1.03
+        shadowVerticalOffset: Style.space(6)
+        shadowScale: 1.0
         Behavior on shadowColor { ColorAnimation { duration: Theme.normal } }
       }
 
+      // The edge is the border, not a frame drawn on top of one. It carries
+      // the state: it brightens while working and takes the danger or ok hue
+      // when there is something to report.
       Rectangle {
         id: plate
         anchors.fill: parent
         radius: Style.cornerRadius
-        color: Util.alpha(Theme.cardBackground, 0.88)
+        color: Util.alpha(Theme.cardBackground, 0.9)
+        border.width: Style.spacing.hairline
+        border.color: Util.alpha(root.tone, plate.lit)
+
+        property real lit: root.phase === "idle" ? 0.28 : 0.55
+        Behavior on lit { NumberAnimation { duration: Theme.normal } }
+        SequentialAnimation on lit {
+          running: root.busy
+          loops: Animation.Infinite
+          NumberAnimation { from: 0.28; to: 0.7; duration: 900; easing.type: Easing.InOutQuad }
+          NumberAnimation { from: 0.7; to: 0.28; duration: 900; easing.type: Easing.InOutQuad }
+        }
       }
 
-      HudScanlines { anchors.fill: parent; color: Theme.cardText }
-      HudFrame { anchors.fill: parent; color: root.tone; armRatio: 0.05 }
+      HudScanlines { anchors.fill: parent; color: Theme.cardText; strength: 0.02 }
 
-      Column {
-        id: card
+      // A caret, not a badge. It marks where typing begins, the way a terminal
+      // prompt does, and carries the state in its colour.
+      Text {
+        id: caret
         anchors.left: parent.left
+        anchors.leftMargin: Style.spacing.huge
+        anchors.verticalCenter: parent.verticalCenter
+        text: root.phase === "error" ? "✕" : root.phase === "done" ? "✓" : "›"
+        color: root.tone
+        font.family: Style.font.family
+        font.pixelSize: Style.font.display
+        font.bold: true
+        opacity: root.busy ? 0.5 : 1
+        SequentialAnimation on opacity {
+          running: root.busy
+          loops: Animation.Infinite
+          NumberAnimation { from: 0.35; to: 1; duration: 620; easing.type: Easing.InOutQuad }
+          NumberAnimation { from: 1; to: 0.35; duration: 620; easing.type: Easing.InOutQuad }
+        }
+      }
+
+      // The hint sits on the same line, at the far end. On its own line under
+      // the field it was a second row of content in something that should read
+      // as one row; here it is an edge marking, which is what a hint is.
+      Row {
+        id: hint
         anchors.right: parent.right
-        anchors.top: parent.top
-        anchors.margins: Style.spacing.huge
-        spacing: Style.spacing.lg
+        anchors.rightMargin: Style.spacing.huge
+        anchors.verticalCenter: parent.verticalCenter
+        spacing: Style.spacing.md
 
-        Row {
-          width: parent.width
-          spacing: Style.spacing.xxl
-
-          // A small ring, so this reads as the same instrument as the voice
-          // core rather than a search box that wandered in.
-          Item {
-            width: Style.space(34); height: Style.space(34)
-            anchors.verticalCenter: parent.verticalCenter
-
-            Rectangle {
-              anchors.fill: parent
-              radius: width / 2
-              color: "transparent"
-              border.width: Math.max(1, Style.space(1.5))
-              border.color: Util.alpha(root.tone, 0.55)
-            }
-            Rectangle {
-              anchors.centerIn: parent
-              width: parent.width * 0.44; height: width
-              radius: width / 2
-              color: Util.alpha(root.tone, 0.22)
-              SequentialAnimation on scale {
-                running: root.phase === "working"
-                loops: Animation.Infinite
-                NumberAnimation { from: 0.7; to: 1.25; duration: 700; easing.type: Easing.InOutQuad }
-                NumberAnimation { from: 1.25; to: 0.7; duration: 700; easing.type: Easing.InOutQuad }
-              }
-            }
-            Text {
-              anchors.centerIn: parent
-              text: root.phase === "error" ? "󰍭" : root.phase === "done" ? "󰄬" : "󰘳"
-              color: root.tone
-              font.family: Style.font.family
-              font.pixelSize: Style.font.bodySmall
-            }
-          }
-
-          TextField {
-            id: field
-            width: parent.width - Style.space(34) - Style.spacing.xxl
-            anchors.verticalCenter: parent.verticalCenter
-            enabled: root.phase !== "working"
-            placeholderText: "what would you like done?"
-            foreground: Theme.cardText
-            accent: root.tone
-            font.family: Style.font.family
-            font.pixelSize: Style.font.heading
-            onAccepted: {
-              var t = text.trim()
-              if (t.length === 0) return
-              root.phase = "working"
-              root.result = ""
-              root.submitted(t)
-            }
-
-            // Escape has to be handled HERE, on the field that owns focus.
-            // A Keys handler on a sibling Item never sees it: the TextField
-            // has active focus, so the event is delivered and consumed there,
-            // and the bar had no keyboard way out at all.
-            Keys.onEscapePressed: function(event) {
-              root.dismissed()
-              event.accepted = true
-            }
-          }
-        }
-
-        HudRail {
-          width: parent.width
+        HudLabel {
+          anchors.verticalCenter: parent.verticalCenter
+          visible: root.phase !== "idle"
+          text: root.busy ? "working" : root.phase === "error" ? "failed" : "done"
+          tone: Theme.cardText
           color: root.tone
-          sweep: root.phase === "working"
-          opacity: 0.9
         }
 
-        Row {
-          width: parent.width
-          spacing: Style.spacing.md
-
-          HudLabel {
-            text: root.phase === "working" ? "thinking"
-              : root.phase === "error" ? "failed"
-              : root.phase === "done" ? "done"
-              // Escape is named because it is the reliable one: this surface
-              // holds exclusive keyboard focus, so a compositor shortcut may
-              // never reach Hyprland while it is open.
-              : "enter to run · esc to close"
-            tone: root.tone
-            color: root.phase === "idle" ? Util.alpha(Theme.cardText, 0.45) : root.tone
-          }
-
-          Text {
-            width: parent.width - Style.space(160)
-            visible: root.result !== ""
-            text: root.result
-            color: root.phase === "error" ? Theme.danger : Util.alpha(Theme.cardText, 0.8)
-            font.family: Style.font.family
-            font.pixelSize: Style.font.caption
-            elide: Text.ElideRight
-          }
+        Text {
+          anchors.verticalCenter: parent.verticalCenter
+          visible: root.result !== ""
+          width: Math.min(implicitWidth, stage.width * 0.4)
+          text: root.result
+          color: root.phase === "error" ? Theme.danger : Util.alpha(Theme.cardText, 0.66)
+          font.family: Style.font.family
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
         }
+
+        HudLabel {
+          anchors.verticalCenter: parent.verticalCenter
+          visible: root.phase === "idle"
+          text: "enter run   esc close"
+          tone: Theme.cardText
+          color: Util.alpha(Theme.cardText, 0.22)
+        }
+      }
+
+      // Raw TextInput rather than the kit's TextField: that one paints its own
+      // border and fill, which is the box inside a box. Here the card IS the
+      // input, so there is only ever one edge on screen.
+      TextInput {
+        id: input
+        anchors.left: caret.right
+        anchors.leftMargin: Style.spacing.xl
+        anchors.right: hint.left
+        anchors.rightMargin: Style.spacing.xl
+        anchors.verticalCenter: parent.verticalCenter
+        verticalAlignment: TextInput.AlignVCenter
+        enabled: !root.busy
+        color: Theme.cardText
+        selectionColor: Util.alpha(root.tone, 0.35)
+        selectedTextColor: Theme.cardText
+        font.family: Style.font.family
+        font.pixelSize: Style.font.display
+        clip: true
+
+        onAccepted: {
+          var t = text.trim()
+          if (t.length === 0) return
+          root.phase = "working"
+          root.result = ""
+          root.submitted(t)
+        }
+
+        // Escape belongs on the item that owns focus. A handler on a parent
+        // never sees it.
+        Keys.onEscapePressed: function(event) { root.dismissed(); event.accepted = true }
+      }
+
+      Text {
+        anchors.fill: input
+        verticalAlignment: Text.AlignVCenter
+        visible: input.text.length === 0 && !root.busy
+        text: "what would you like done?"
+        color: Util.alpha(Theme.cardText, 0.3)
+        font.family: Style.font.family
+        font.pixelSize: Style.font.display
+        elide: Text.ElideRight
       }
     }
 
-    // Backstop for the moment before the field takes focus, and for any state
-    // where it is disabled (while a request is running).
     Item {
       anchors.fill: parent
-      focus: root.open && !field.activeFocus
-      Keys.onEscapePressed: function(event) {
-        root.dismissed()
-        event.accepted = true
-      }
+      focus: root.open && !input.activeFocus
+      Keys.onEscapePressed: function(event) { root.dismissed(); event.accepted = true }
     }
   }
 }

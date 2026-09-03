@@ -86,8 +86,10 @@ Item {
     // about what is on your screen, so it should not vanish.
     Rectangle {
       anchors.fill: parent
-      color: Qt.rgba(0, 0, 0, 1)
-      opacity: root.active ? 0.42 : 0
+      // The theme's own dim, not black -- a light theme should not be shaded
+      // with soot, and a theme that defines its own polkit scrim gets that.
+      color: Theme.authScrim
+      opacity: root.active ? 0.85 : 0
       Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
     }
 
