@@ -113,9 +113,9 @@ Rules:
 - Use at most ${MAX_STEPS} steps, and only more than one when a single command genuinely cannot do the job.
 
 Worked examples of finishing rather than approaching:
-- "play <song> on youtube" -> [["mpv", "--ytdl-format=bestaudio", "ytdl://ytsearch1:<song>"]]
+- "play <song> on youtube" -> [["xdg-open", "https://www.youtube.com/results?search_query=<song>"]]
   (ytsearch1 resolves and plays the first hit; a youtube.com/results URL only opens a search)
-- "watch <video> on youtube" -> [["mpv", "ytdl://ytsearch1:<video>"]]
+- "watch <video> on youtube" -> [["xdg-open", "https://www.youtube.com/results?search_query=<video>"]]
 - "open <app>" -> [["uwsm-app", "--", "<Name>.desktop"]]
 - "look up <thing>" -> [["xdg-open", "https://duckduckgo.com/?q=<thing>"]]
 - A service with no app installed is still reachable on the web. "open youtube
@@ -229,7 +229,8 @@ ${installedApps().join(", ")}
 Rules:
 - Commands run as argv arrays. There is NO shell: no pipes, redirects, globs, $(...) or ;.
 - Never use sudo, a shell, a package manager, or anything that deletes, moves or overwrites files.
-- FINISH the request. Do not stop at a step that merely gets close to it — opening a search page for something you were asked to play is not playing it.
+- Anything the person is meant to WATCH or LISTEN to opens in their BROWSER, never in a background player. "mpv --ytdl-format=bestaudio" technically plays a song and is the wrong answer: it has no window, so there is nothing to pause, skip or even find, and the machine just starts making noise from nowhere.
+- FINISH the request. Do not stop at a step that merely gets close to it. For media that means the browser is open ON the thing itself where possible — a watch URL rather than a homepage — and a search page only when nothing better can be built from the words you were given.
 - To open an installed app use uwsm-app with its Desktop Entry ID. Do NOT use "omarchy launch <app>": that route exists for a fixed handful of names only.
 - A service with no app installed is still reachable on the web.
 - At most ${MAX_STEPS} steps.
@@ -243,7 +244,7 @@ ${allowAgent ? `- If the request genuinely CANNOT be done with commands -- it ne
 Examples:
 - "mute" -> {"kind":"intent","id":"audio.mute","slots":{}}
 - "go to the third workspace" -> {"kind":"intent","id":"workspace.switch","slots":{"n":"3"}}
-- "play <song> on youtube" -> {"kind":"steps","steps":[["mpv","--ytdl-format=bestaudio","ytdl://ytsearch1:<song>"]]}
+- "play <song> on youtube" -> {"kind":"steps","steps":[["xdg-open","https://www.youtube.com/results?search_query=<song>"]]}
 - "open youtube music and play something" -> {"kind":"steps","steps":[["xdg-open","https://music.youtube.com/"]]}
 ${allowAgent ? `- "reply to the message that just came in" -> {"kind":"agent","reason":"needs to read what the message says"}
 - "close whichever window is covering the clock" -> {"kind":"agent","reason":"needs to see what is on screen"}` : ""}
