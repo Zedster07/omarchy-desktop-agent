@@ -50,7 +50,7 @@ import path from "node:path"
 const policyPath = () =>
   process.env.DESKTOP_AGENT_POLICY || path.join(os.homedir(), ".config", "desktop-agent", "policy.jsonc")
 const AUDIT_PATH = path.join(os.homedir(), ".local", "share", "desktop-agent", "desktop.log")
-import { onWorkspace, isLaunch, confinementWorkspace, inTerminal } from "../voice/workspace.ts"
+import { onWorkspace, isLaunch, confinementWorkspace, ensureAgentTerminal, sendToAgentTerminal } from "../voice/workspace.ts"
 
 const TMP = path.join(os.tmpdir(), "desktop-agent")
 
@@ -2276,16 +2276,18 @@ server.registerTool(
     // `chromium` inside a terminal just leaves a dead shell next to it.
     const visible = VISIBLE_RUNS && !launches && CONFINE_WS > 0
     await fs.mkdir(TMP, { recursive: true })
-    const term = visible ? inTerminal([bin, ...argv], TMP, "Desktop Agent") : null
+
+    // One persistent terminal, typed into. A fresh window per command was a
+    // flicker on a workspace nobody was looking at; this is a session you can
+    // switch to and read, with the commands in order and their output kept.
+    const term = visible && (await ensureAgentTerminal(CONFINE_WS, TMP))
+      ? sendToAgentTerminal([bin, ...argv], TMP)
+      : null
 
     if (term) {
-      // The terminal process is not the command: the compositor may reparent
-      // it, and it lingers on purpose so the output stays readable. The exit
-      // code file is the completion marker, so that is what gets polled.
+      // The exit code file is the completion marker: the terminal outlives the
+      // command on purpose, so there is no process to wait on.
       const { outFile, codeFile } = term
-      Bun.spawn(onWorkspace(term.argv, CONFINE_WS), {
-        cwd, stdin: "ignore", stdout: "ignore", stderr: "ignore", env: process.env,
-      }).unref()
 
       const deadline = Date.now() + Math.max(1000, policy.run.timeoutMs)
       while (Date.now() < deadline) {

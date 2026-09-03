@@ -126,4 +126,89 @@ export function inTerminal(
   return term ? { argv: term, outFile, codeFile } : null
 }
 
+// ---------------------------------------------------------------- terminal
+//
+// ONE terminal for the whole run, not one per command.
+//
+// The first version opened a fresh window per command and closed it three
+// seconds later. A window existed, which is not the same as a person being
+// able to watch it: `date` runs in five milliseconds, so it was a flicker on a
+// workspace you were not looking at. What you want to see is a session -- the
+// commands in order, their output, still there when you switch over.
+//
+// tmux is what makes that possible: the window holds a session, and each
+// command is typed INTO it the way a person would type into a terminal they
+// already had open.
+
+const SESSION = "desktop-agent"
+const TITLE = "Desktop Agent"
+
+/** Is the agent's terminal session alive? */
+export function agentTerminalUp(): boolean {
+  try {
+    const p = Bun.spawnSync(["tmux", "has-session", "-t", SESSION])
+    return p.exitCode === 0
+  } catch { return false }
+}
+
+/**
+ * Make sure the agent's terminal exists on `ws`, creating it if not.
+ *
+ * The `da` helper defined at session start is what lets the pane show a
+ * readable command while still capturing output and a real exit code: running
+ * the command bare would show it perfectly and tell us nothing, and inlining
+ * the redirects would tell us everything and show a wall of plumbing.
+ */
+export async function ensureAgentTerminal(ws: number, dir: string): Promise<boolean> {
+  if (!Bun.which("tmux")) return false
+  if (!agentTerminalUp()) {
+    // No id argument in the visible command. Tool calls are serialised by the
+    // server, so one pair of "last" files is unambiguous, and the pane gets to
+    // read `da uname -r` instead of `da 3c6b38a7 uname -r`. The wrapper itself
+    // stays visible on purpose -- it is really there, and hiding it would make
+    // the pane a nicer lie.
+    const helper =
+      `da() { ` +
+      `"$@" > ${dir}/last.out 2>&1; rc=$?; ` +
+      `cat ${dir}/last.out; ` +
+      `echo $rc > ${dir}/last.code; ` +
+      `return $rc; }`
+    const boot = `tmux new-session -d -s ${SESSION} && tmux send-keys -t ${SESSION} ${shq(helper)} Enter && tmux send-keys -t ${SESSION} clear Enter`
+    Bun.spawnSync(["sh", "-c", boot])
+  }
+  // Attach a window to it if one is not already on screen.
+  const term = Bun.which("foot")
+    ? ["foot", "-T", TITLE, "tmux", "attach", "-t", SESSION]
+    : Bun.which("wezterm")
+      ? ["wezterm", "start", "--", "tmux", "attach", "-t", SESSION]
+      : Bun.which("xdg-terminal-exec")
+        ? ["xdg-terminal-exec", "--", "tmux", "attach", "-t", SESSION]
+        : null
+  if (!term) return false
+
+  const clients = Bun.spawnSync(["sh", "-c", `tmux list-clients -t ${SESSION} 2>/dev/null | wc -l`])
+  const attached = Number(new TextDecoder().decode(clients.stdout).trim()) > 0
+  if (!attached) {
+    Bun.spawn(onWorkspace(term, ws), { stdout: "ignore", stderr: "ignore", stdin: "ignore" }).unref()
+    await new Promise(r => setTimeout(r, 600))
+  }
+  return true
+}
+
+/**
+ * Type a command into the agent's terminal. Returns the marker file paths.
+ *
+ * The stale marker is removed FIRST: the caller polls for the code file to
+ * appear, so leaving the previous one in place would make every command look
+ * like it finished instantly with the last command's result.
+ */
+export function sendToAgentTerminal(argv: string[], dir: string): { outFile: string; codeFile: string } {
+  const outFile = `${dir}/last.out`
+  const codeFile = `${dir}/last.code`
+  try { require("node:fs").unlinkSync(codeFile) } catch {}
+  try { require("node:fs").unlinkSync(outFile) } catch {}
+  Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, `da ${argv.map(shq).join(" ")}`, "Enter"])
+  return { outFile, codeFile }
+}
+
 export { DEFAULT_WORKSPACE }
