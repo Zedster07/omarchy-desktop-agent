@@ -58,7 +58,7 @@ const TMP = path.join(os.tmpdir(), "desktop-agent")
  * per server entry rather than per call. Run two entries with different values
  * if you want two different leashes.
  */
-const IDENTITY = process.env.DESKTOP_AGENT_IDENTITY?.trim() || "claude"
+const IDENTITY = process.env.DESKTOP_AGENT_IDENTITY?.trim() || "agent"
 
 /** The bar panel's emergency stop: a file whose existence means "refuse". */
 const KILL_FLAG =
@@ -659,7 +659,7 @@ async function decideWindow(policy: Policy, cap: Capability, verb: WindowVerb, w
   if (policy.protectSelf && (await selfPids()).has(w.pid)) {
     return {
       action: "deny",
-      reasons: [`this is the terminal Claude Code itself runs in (pid ${w.pid}) — blocked by "protectSelf"`],
+      reasons: [`this is the terminal the agent itself runs in (pid ${w.pid}) — blocked by "protectSelf"`],
       subject,
     }
   }

@@ -92,7 +92,14 @@
   //  CAVEAT, read this before relying on it: MCP gives the server no way to
   //  tell which Claude Code subagent is calling. Every call therefore arrives
   //  under one identity, taken from $DESKTOP_AGENT_IDENTITY and defaulting to
-  //  "claude". Run `desktop_policy` to see the identity in force.
+  //  "agent". Run `desktop_policy` to see the identity in force.
+  //
+  //  The default used to be "claude" and changed when a second agent CLI could
+  //  be selected. If you wrote rules under a "claude" key BEFORE that change,
+  //  check them: an MCP entry whose env does not set DESKTOP_AGENT_IDENTITY
+  //  now arrives as "agent" and will not match them. `desktop-agent
+  //  mcp-install` writes the identity explicitly; entries installed earlier
+  //  do not have it.
   //
   //  So this section is only useful if you run a second MCP entry with a
   //  different DESKTOP_AGENT_IDENTITY in its env. For a single entry it is

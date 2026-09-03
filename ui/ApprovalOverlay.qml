@@ -33,7 +33,7 @@ Item {
   // for one sentence and will never recur verbatim, so the button would only
   // ever be a way to lower the guard on future, different plans.
   readonly property bool oneOff: request && String(request.tool || "").indexOf("AI suggests") === 0
-  readonly property string principal: request ? String(request.principal || "claude") : ""
+  readonly property string principal: request ? String(request.principal || "agent") : ""
 
   readonly property color tone: destructive ? Theme.danger : Theme.authAccent
   readonly property color edge: destructive ? Theme.authBorderError : Theme.authBorder

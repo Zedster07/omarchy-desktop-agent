@@ -198,7 +198,7 @@ Item {
       capability: String(req.capability || ""),
       scope: String(req.scope || ""),
       target: String(req.target || ""),
-      principal: String(req.principal || "claude"),
+      principal: String(req.principal || "agent"),
       severity: String(req.severity || "normal"),
       reasons: Array.isArray(req.reasons) ? req.reasons.map(String) : []
     })

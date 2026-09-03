@@ -643,7 +643,7 @@ Panel {
               visible: root.s("ai.assist", "route+plan") !== "off"
               label: "provider"
               fontFamily: root.fontFamily
-              help: "auto prefers an installed CLI agent and falls back to a local Ollama model. Only providers found on this machine are used."
+              help: "auto selects an installed CLI agent (Claude, Gemini, Codex, or OpenCode) and falls back to a local Ollama model for planning."
               Dropdown {
                 width: parent.width
                 showLabel: false
