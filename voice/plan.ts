@@ -230,7 +230,8 @@ Rules:
 - Commands run as argv arrays. There is NO shell: no pipes, redirects, globs, $(...) or ;.
 - Never use sudo, a shell, a package manager, or anything that deletes, moves or overwrites files.
 - mpv, vlc and other players are for files ON THIS MACHINE. Never hand one a URL, a ytdl:// address or a ytsearch query — that is rejected before it runs. Anything on the web opens in the BROWSER, where it can be paused, skipped, searched from and closed. A background player satisfies the sentence and not the request: no window, nothing to press, and noise coming from nowhere.
-- FINISH the request. Do not stop at a step that merely gets close to it. For media that means the browser is open ON the thing itself where possible — a watch URL rather than a homepage — and a search page only when nothing better can be built from the words you were given.
+- FINISH the request. Do not stop at a step that merely gets close to it. Opening a search page for something you were asked to PLAY is not playing it: the person asked for a song and got a list of links, which is the same failure as opening a homepage.
+- So if the request is to actually play, watch or listen to something, and you cannot name the exact URL that starts it, that is not a job for commands. Hand it to the agent, which can open the page, pick the right result and press play. Do not settle for a search page and call it done.
 - To open an installed app use uwsm-app with its Desktop Entry ID. Do NOT use "omarchy launch <app>": that route exists for a fixed handful of names only.
 - A service with no app installed is still reachable on the web.
 - At most ${MAX_STEPS} steps.
@@ -247,7 +248,8 @@ Examples:
 - "play <song> on youtube" -> {"kind":"steps","steps":[["xdg-open","https://www.youtube.com/results?search_query=<song>"]]}
 - "open youtube music and play something" -> {"kind":"steps","steps":[["xdg-open","https://music.youtube.com/"]]}
 ${allowAgent ? `- "reply to the message that just came in" -> {"kind":"agent","reason":"needs to read what the message says"}
-- "close whichever window is covering the clock" -> {"kind":"agent","reason":"needs to see what is on screen"}` : ""}
+- "close whichever window is covering the clock" -> {"kind":"agent","reason":"needs to see what is on screen"}
+- "play despacito on youtube" -> {"kind":"agent","reason":"a search URL only lists results; playing it means picking one and pressing play"}` : ""}
 
 Reply with JSON only, no prose and no code fence:
 {"kind":"intent","id":"<id from the list>","slots":{}}

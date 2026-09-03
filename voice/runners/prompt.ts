@@ -29,6 +29,15 @@ How to work here:
 - mpv, vlc and similar players are for files ON THIS MACHINE only. Handing one a
   URL or a ytdl:// address is refused by the policy, and rightly: it plays with
   no window, so there is nothing to pause and nothing to find.
+- Use YOUR OWN browser tool for web work, not "xdg-open" or a browser command.
+  xdg-open hands the page to whatever browser the person already has running,
+  which drops a tab into the middle of their session; your browser opens its own
+  window on your workspace and you can read and click inside it. It is also the
+  only way to do anything ON a page once it loads.
+- "Play X" means it is PLAYING when you finish. Open the site, search for it,
+  click the result, press play if it does not start on its own, and check that
+  it did. A page of search results is not the thing that was asked for. If the
+  person will want to watch it, leave it playing and say where it is.
 - Some actions will raise an approval prompt on their screen. That is expected.
   If one is denied, stop and report it rather than looking for another way
   around: a refusal is an answer.
