@@ -68,41 +68,30 @@ Item {
   PanelWindow {
     id: window
     visible: root.active
-    // Sized to the card. The blur rule applies to whatever this surface
-    // covers, so anchoring it to the screen frosted the entire desktop behind
-    // one dialog. No anchors means the compositor centres it.
-    //
-    // Worth stating the tradeoff, because this is the one surface where a
-    // scrim earned its keep: this is a security decision, and dimming
-    // everything else is how a modal says "answer me before you carry on".
-    // Removing it makes the prompt easier to ignore or to miss. It keeps its
-    // exclusive keyboard grab, so it is still modal to the keyboard -- but it
-    // no longer LOOKS modal.
+    // Full screen, like the text prompt. This is a security decision with the
+    // keyboard grabbed: dimming and blurring everything else is how a modal
+    // says "answer me before you carry on", and a card-sized blur reads as a
+    // smudge rather than as depth.
+    anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "omarchy-desktop-agent-approval"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
-    implicitWidth: cardWrap.width + pad * 2
-    implicitHeight: cardWrap.height + pad * 2
 
-    readonly property int pad: Style.space(56)
-
-    // Centred by hand -- an anchorless layer surface collapses rather than
-    // floating in the middle.
-    anchors { top: true; left: true }
-    margins {
-      top: Math.max(0, (window.screen.height - window.implicitHeight) / 2)
-      left: Math.max(0, (window.screen.width - window.implicitWidth) / 2)
+    Rectangle {
+      anchors.fill: parent
+      color: Theme.authScrim
+      opacity: root.revealT
     }
 
     Item {
       id: cardWrap
       // Measured against the screen, not the parent: the parent is this card's
       // own window now, which would be circular.
-      width: Math.min(Style.space(600), window.screen.width - Style.gapsOut * 2)
+      width: Math.min(Style.space(600), parent.width - Style.gapsOut * 2)
       height: Math.min(body.implicitHeight + Style.spacing.panelPadding * 2,
-                       window.screen.height - Style.gapsOut * 2)
+                       parent.height - Style.gapsOut * 2)
       anchors.centerIn: parent
       opacity: root.revealT
       transform: Translate { y: (1 - root.revealT) * Style.space(14) }

@@ -87,30 +87,27 @@ Item {
     // fill still blurred the entire desktop. The screen looked frosted with
     // nothing drawn on it. Anchored to one corner while compact, the blur
     // lands on the readout and the rest of the screen is untouched.
-    // Centred while listening, bottom-right while working. An anchorless
-    // layer surface collapses instead of centring, so the listening form
-    // anchors top-left and is pushed in by half the leftover space.
+    // Two shapes, and the difference is the whole point of this file.
+    //
+    // Listening covers the screen: you are addressing the machine, there is
+    // nothing else to look at, and the blur plus dim is what makes it feel
+    // like the desktop is waiting on you.
+    //
+    // Working does the opposite -- corner-sized, no blur, no dim, no input
+    // region -- because watching an agent work IS watching your own screen,
+    // and anything laid over the top hides the only thing worth seeing.
     anchors {
       top: root.immersive
       left: root.immersive
-      bottom: !root.immersive
-      right: !root.immersive
+      bottom: true
+      right: true
     }
     margins {
-      top: root.immersive ? Math.max(0, (window.screen.height - window.implicitHeight) / 2) : 0
-      left: root.immersive ? Math.max(0, (window.screen.width - window.implicitWidth) / 2) : 0
       bottom: root.immersive ? 0 : Style.gapsOut * 2
       right: root.immersive ? 0 : Style.gapsOut * 2
     }
-    // Content-sized in BOTH forms. Listening no longer covers the screen
-    // either -- the core gets its own blurred disc and the desktop behind it
-    // stays sharp. With no anchors set the compositor centres the surface,
-    // which is where the listening core belongs; the compact form anchors
-    // itself to the bottom-right corner instead.
-    implicitWidth: (root.immersive ? stage.width : pill.width) + (root.immersive ? pad * 2 : 0)
-    implicitHeight: (root.immersive ? stage.height : pill.height) + (root.immersive ? pad * 2 : 0)
-
-    readonly property int pad: Style.space(70)
+    implicitWidth: root.immersive ? 0 : pill.width
+    implicitHeight: root.immersive ? 0 : pill.height
     color: "transparent"
     WlrLayershell.namespace: "omarchy-desktop-agent-voice"
     WlrLayershell.layer: WlrLayer.Overlay
@@ -125,10 +122,20 @@ Item {
     Region { id: passThrough }
 
 
+    // Dim behind the core while listening only. The compositor blurs what this
+    // surface covers, and while compact it covers one corner, so this is
+    // bound to immersive rather than to active.
+    Rectangle {
+      anchors.fill: parent
+      color: Theme.authScrim
+      opacity: root.immersive ? 0.85 : 0
+      Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
+    }
+
     Item {
       id: stage
       anchors.centerIn: parent
-      width: Math.min(Style.space(640), window.screen.width - Style.gapsOut * 4)
+      width: Math.min(Style.space(640), parent.width - Style.gapsOut * 4)
       height: core.height + readout.implicitHeight + Style.spacing.huge
 
       visible: opacity > 0

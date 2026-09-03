@@ -52,40 +52,43 @@ Item {
   PanelWindow {
     id: window
     visible: root.open
-    // Sized to the card, not to the screen.
+    // Full screen on purpose.
     //
-    // The blur layer rule applies to whatever this surface COVERS, so a
-    // full-screen window blurred the whole desktop to show one input box. The
-    // window is the card now (plus room for its bloom, which is drawn outside
-    // the plate and would otherwise be clipped), so the frosting lands on the
-    // card and nothing else. No anchors means the compositor centres it.
+    // Sizing this surface to the card made the blur rule frost only the card
+    // and its padding, which reads as a smudged rectangle stuck to the screen
+    // rather than as depth. A modal that has taken your keyboard should take
+    // the whole view with it: the blur covers everything, so the one sharp
+    // thing on screen is the thing you are typing into.
+    //
+    // This is the opposite call to the voice HUD's working state, and
+    // deliberately so -- that one must not cover the screen, because watching
+    // the agent work IS watching your screen. Here there is nothing to watch.
+    anchors { top: true; bottom: true; left: true; right: true }
     color: "transparent"
     WlrLayershell.namespace: "omarchy-desktop-agent-prompt"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
-    implicitWidth: stage.width + pad * 2
-    implicitHeight: stage.height + pad * 2
 
-    readonly property int pad: Style.space(56)
-
-    // Centred by hand. A layer surface with no anchors does not float in the
-    // middle -- it collapses, and the window renders nothing at all. Anchor
-    // two edges and push it in by half the leftover space.
-    anchors { top: true; left: true }
-    margins {
-      top: Math.max(0, (window.screen.height - window.implicitHeight) / 2)
-      left: Math.max(0, (window.screen.width - window.implicitWidth) / 2)
+    // A light dim on top of the blur. Blur alone washes light desktops out
+    // without actually separating the card from them.
+    Rectangle {
+      anchors.fill: parent
+      color: Theme.authScrim
+      opacity: root.open ? 1 : 0
+      Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
     }
 
-    // Click-outside-to-dismiss is gone with the full-screen surface: there is
-    // no outside any more. Escape closes it, which the hint says.
+    // With a full-screen surface there is an "outside" again, so clicking it
+    // closes -- the same gesture every other modal on the desktop has.
+    MouseArea { anchors.fill: parent; onClicked: root.dismissed() }
+
     Item {
       id: stage
       anchors.centerIn: parent
       // Off the screen, not off the parent: the parent is now this card, so
       // measuring against it would be circular.
-      width: Math.min(Style.space(720), window.screen.width - Style.gapsOut * 6)
+      width: Math.min(Style.space(720), parent.width - Style.gapsOut * 6)
       height: Math.max(input.implicitHeight, caret.implicitHeight) + Style.spacing.huge * 2
 
       opacity: root.open ? 1 : 0

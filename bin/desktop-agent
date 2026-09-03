@@ -145,9 +145,7 @@ Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:
       decoration = { blur = { enabled = true, size = 6, passes = 2,
                               new_optimizations = true, ignore_opacity = true } },
     })
-    -- Deliberately NOT the voice namespace: that surface is a ring floating on
-    -- nothing, so blurring behind it paints a rectangle of frost around a
-    -- circle. Only the two card surfaces opt in.
+    hl.layer_rule({ match = { namespace = "omarchy-desktop-agent-voice" }, blur = true })
     hl.layer_rule({ match = { namespace = "omarchy-desktop-agent-approval" }, blur = true })
     hl.layer_rule({ match = { namespace = "omarchy-desktop-agent-prompt" }, blur = true })
 
