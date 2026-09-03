@@ -137,7 +137,7 @@ Add to ~/.config/hypr/bindings.lua:
     -- may not be in the same place at all. Space is the same physical key
     -- everywhere, and this sits beside the launcher on SUPER+SPACE.
     o.bind("SUPER + F1", "Command prompt",
-           "omarchy-shell shell call io.github.zedster07.desktop-agent prompt")
+           "omarchy-shell io.github.zedster07.desktop-agent prompt")
 
 Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:
 
@@ -240,6 +240,15 @@ PY
     ;;
   keybinds)
     keybinds
+    echo "Checking the commands those bindings run:"
+    for c in desktop-agent-listen omarchy-shell; do
+      if have "$c"; then ok "$c on PATH"; else bad "$c missing — the binding will do nothing"; fi
+    done
+    if omarchy-shell io.github.zedster07.desktop-agent status >/dev/null 2>&1; then
+      ok "omarchy-shell reaches the plugin"
+    else
+      bad "omarchy-shell cannot reach the plugin — is the shell running with it enabled?"
+    fi
     echo "Checking those against what Hyprland actually has bound:"
     python3 - <<'PY'
 import json, subprocess, sys
