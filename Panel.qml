@@ -31,15 +31,80 @@ Panel {
 
   readonly property string fontFamily: root.bar ? root.bar.fontFamily : Style.font.family
 
-  // ---- live state from the service
-  readonly property bool policyEnabled: service ? service.policyEnabled : true
-  readonly property bool policyReadable: service ? service.policyReadable : true
-  readonly property int pendingCount: service ? service.pendingCount : 0
-  readonly property bool yoloActive: service ? service.yoloActive : false
-  readonly property string yoloClock: service ? service.yoloClock : "0:00"
-  readonly property bool voiceAvailable: service ? service.voiceAvailable : false
-  readonly property string voicePhase: service ? service.voiceState : "idle"
+  // ---- live state, from the service object when there is one and over the
+  //      plugin's own IPC when there is not.
+  //
+  // There usually is not. The shell injects `service` only into panels IT
+  // loads (shell.qml: `if ("service" in item) item.service = ...`), and this
+  // panel is loaded by our own BarWidget as a flyout, which injects `bar`,
+  // `settings`, `anchorItem` and `hostWidget` -- and no service. So the panel
+  // people actually click had service === null, every reading showed its
+  // fallback (VOICE offline while the daemon was up, "policy active" while
+  // full access was running) and every button was a silent no-op behind
+  // `if (root.service)`. A guard that hides a missing dependency instead of
+  // reporting it turns a wiring bug into a UI that simply does nothing.
+  //
+  // The IPC surface is the same one the service exposes to everyone else, so
+  // this is not a second implementation -- just a different way of reaching
+  // the same functions.
+  property var ipcState: ({})
+  readonly property bool viaIpc: service === null
+
+  readonly property bool policyEnabled: service ? service.policyEnabled
+    : (ipcState.enabled !== undefined ? ipcState.enabled : true)
+  readonly property bool policyReadable: service ? service.policyReadable
+    : (ipcState.policyReadable !== undefined ? ipcState.policyReadable : true)
+  readonly property int pendingCount: service ? service.pendingCount
+    : (ipcState.pendingCount || 0)
+  readonly property bool yoloActive: service ? service.yoloActive
+    : (ipcState.yolo === true)
+  readonly property string yoloClock: {
+    if (service) return service.yoloClock
+    var s = Number(ipcState.yoloRemaining || 0)
+    if (s <= 0) return "0:00"
+    return Math.floor(s / 60) + ":" + ("0" + (s % 60)).slice(-2)
+  }
+  readonly property bool voiceAvailable: service ? service.voiceAvailable
+    : (ipcState.voice === true)
+  readonly property string voicePhase: service ? service.voiceState
+    : String(ipcState.voiceState || "idle")
   readonly property bool listening: voicePhase === "listening"
+
+  // ---- the IPC bridge, used only when no service was injected
+  readonly property var ipcBase: ["qs", "-p", "/usr/share/omarchy/shell", "ipc",
+                                  "call", "io.github.zedster07.desktop-agent"]
+
+  function ipcCall(fn, arg) {
+    var cmd = root.ipcBase.concat([fn])
+    if (arg !== undefined && arg !== null) cmd.push(String(arg))
+    ipcActionProc.command = cmd
+    ipcActionProc.running = true
+  }
+
+  function pollState() {
+    if (!root.viaIpc) return
+    ipcStateProc.command = root.ipcBase.concat(["status"])
+    ipcStateProc.running = true
+  }
+
+  Process {
+    id: ipcStateProc
+    stdout: SplitParser {
+      onRead: function(line) {
+        try { root.ipcState = JSON.parse(String(line)) } catch (e) {}
+      }
+    }
+  }
+  Process { id: ipcActionProc; onExited: root.pollState() }
+
+  // While the panel is open the clock has to move, or "full access · 14:59"
+  // sits frozen and reads as broken.
+  Timer {
+    running: root.viaIpc && root.opened
+    interval: 1000
+    repeat: true
+    onTriggered: root.pollState()
+  }
 
   // ---- settings, loaded from desktop-agent-config
   property var cfg: ({})
@@ -117,6 +182,7 @@ Panel {
 
   function refresh() {
     if (service) { service.probe(); service.readYolo() }
+    else root.pollState()
     if (!cfgProc.running) cfgProc.running = true
   }
   function toggleKillswitch() { if (service) service.toggleKillswitch() }
@@ -160,6 +226,24 @@ Panel {
   Process { id: applyProc; command: ["desktop-agent-config", "apply-stt"]; onExited: { root.busy = ""; cfgProc.running = true } }
   Process { id: secretProc; onExited: { cfgProc.running = true; root.applyStt() } }
   Process { id: openProc }
+
+  // Opening a file needs no service -- it is a process, and the panel already
+  // runs those. Routing it through the service was the reason "open policy"
+  // and "open audit log" died with everything else.
+  readonly property string policyFile: (Quickshell.env("HOME") || "~") + "/.config/desktop-agent/policy.jsonc"
+  readonly property string auditFile: (Quickshell.env("HOME") || "~") + "/.local/share/desktop-agent/desktop.log"
+
+  function openPath(launcher, path) {
+    if (openProc.running) return
+    openProc.command = [launcher, path]
+    openProc.running = true
+  }
+  function openAudit() {
+    if (openProc.running) return
+    openProc.command = ["omarchy-launch-tui", "--app-id=org.omarchy.desktop-agent-log",
+                        "bash", "-c", "touch '" + root.auditFile + "'; tail -n 200 -f '" + root.auditFile + "'"]
+    openProc.running = true
+  }
 
   Process {
     id: costProc
@@ -380,7 +464,8 @@ Panel {
                     foreground: Theme.caution; accent: Theme.caution
                     bordered: true; focusable: true
                     fontSize: Style.font.bodySmall
-                    onClicked: if (root.service) root.service.grantYolo(modelData)
+                    onClicked: root.service ? root.service.grantYolo(modelData)
+                      : root.ipcCall("yolo", modelData)
                   }
                 }
               }
@@ -390,7 +475,7 @@ Panel {
                 foreground: Theme.ok; accent: Theme.ok
                 bordered: true; focusable: true
                 fontSize: Style.font.bodySmall
-                onClicked: if (root.service) root.service.endYolo()
+                onClicked: root.service ? root.service.endYolo() : root.ipcCall("yoloOff")
               }
             }
           }
@@ -746,14 +831,14 @@ Panel {
                 foreground: Color.foreground
                 bordered: true; focusable: true
                 fontSize: Style.font.bodySmall
-                onClicked: { if (root.service) root.service.openPolicy(); root.close() }
+                onClicked: { root.openPath("omarchy-launch-editor", root.policyFile); root.close() }
               }
               Button {
                 text: "Audit log"
                 foreground: Color.foreground
                 bordered: true; focusable: true
                 fontSize: Style.font.bodySmall
-                onClicked: { if (root.service) root.service.openAuditLog(); root.close() }
+                onClicked: { root.openAudit(); root.close() }
               }
             }
 
