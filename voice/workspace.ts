@@ -49,4 +49,24 @@ export function isLaunch(argv: string[]): boolean {
     .includes(prog)
 }
 
+/**
+ * The workspace the agent's windows are placed on, or 0 for "do not confine".
+ *
+ * Per-run via DESKTOP_AGENT_WORKSPACE (set by whichever runner started the
+ * hand-off), falling back to the saved setting so it applies equally to a
+ * plain Claude Code session talking to this MCP server. One resolver, so the
+ * MCP server, the browser and the voice executor cannot disagree about where
+ * the agent's windows go.
+ */
+export function confinementWorkspace(): number {
+  const fromEnv = Number(process.env.DESKTOP_AGENT_WORKSPACE)
+  if (Number.isFinite(fromEnv) && fromEnv > 0) return fromEnv
+  try {
+    const raw = require("node:fs").readFileSync(
+      `${process.env.HOME}/.config/desktop-agent/settings.json`, "utf8")
+    const n = Number(JSON.parse(raw)?.agent?.workspace)
+    return Number.isFinite(n) && n > 0 ? n : 0
+  } catch { return 0 }
+}
+
 export { DEFAULT_WORKSPACE }

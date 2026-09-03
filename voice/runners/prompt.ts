@@ -1,6 +1,13 @@
 export function taskPrompt(phrase: string, workspace: number): string {
+  // Placement is enforced by the MCP server now, not requested here.
+  //
+  // This used to be an instruction telling the agent to prefix every launch
+  // with [workspace N silent]. It was ignored often enough that windows kept
+  // landing on top of whatever the person was doing -- which is what prompt
+  // text gets you: a request, obeyed at the model's discretion. The server
+  // wraps launches itself, so all that is left to say is "do not undo it".
   const placement = workspace > 0
-    ? `\n- Anything you OPEN must go to workspace ${workspace}, so it does not land in the middle of what the person is doing. Launch with:\n    hyprctl dispatch 'hl.dsp.exec_cmd("[workspace ${workspace} silent] <command>")'\n  "silent" places the window there without moving their focus. Do not switch workspaces yourself.`
+    ? `\n- Anything you open is placed on workspace ${workspace} automatically, out of the person's way. Do not switch workspaces or move windows to follow it, and do not try to place windows yourself.`
     : ""
   return `You are driving a Linux desktop on behalf of someone who spoke this request out loud:
 

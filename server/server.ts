@@ -50,6 +50,8 @@ import path from "node:path"
 const policyPath = () =>
   process.env.DESKTOP_AGENT_POLICY || path.join(os.homedir(), ".config", "desktop-agent", "policy.jsonc")
 const AUDIT_PATH = path.join(os.homedir(), ".local", "share", "desktop-agent", "desktop.log")
+import { onWorkspace, isLaunch, confinementWorkspace } from "../voice/workspace.ts"
+
 const TMP = path.join(os.tmpdir(), "desktop-agent")
 
 /**
@@ -59,6 +61,21 @@ const TMP = path.join(os.tmpdir(), "desktop-agent")
  * if you want two different leashes.
  */
 const IDENTITY = process.env.DESKTOP_AGENT_IDENTITY?.trim() || "agent"
+
+/**
+ * Workspace that anything the agent OPENS gets placed on.
+ *
+ * This used to live only in the hand-off prompt, as a sentence asking the
+ * agent to launch things with a [workspace N silent] prefix. Prompt text is a
+ * request, not a mechanism: the agent mostly ignored it and dropped windows
+ * into the middle of whatever the person was doing. Placement belongs here,
+ * where every window-opening path goes through one function and no model has
+ * to remember anything.
+ *
+ * Per-run via the env the runner sets, falling back to the saved setting so it
+ * also applies to a plain Claude Code session using this MCP server. 0 is off.
+ */
+const CONFINE_WS = confinementWorkspace()
 
 /** The bar panel's emergency stop: a file whose existence means "refuse". */
 const KILL_FLAG =
@@ -1879,9 +1896,13 @@ server.registerTool(
     await gate("desktop_launch", "launch", d, error, `app:${args.app}`)
 
     const before = new Set((await windows()).map((w) => w.address))
-    const proc = Bun.spawn(cmd, { stdio: ["ignore", "ignore", "ignore"], env: process.env })
+    // Placed, not requested. onWorkspace returns the argv unchanged when
+    // confinement is off, so there is no second code path.
+    const spawned = onWorkspace(cmd, CONFINE_WS)
+    const proc = Bun.spawn(spawned, { stdio: ["ignore", "ignore", "ignore"], env: process.env })
     proc.unref()
-    await audit(policy, `launch ${args.app}: ${cmd.join(" ")}`)
+    await audit(policy, `launch ${args.app}: ${cmd.join(" ")}` +
+      (CONFINE_WS ? ` [workspace ${CONFINE_WS}]` : ""))
 
     // Give it a moment and report whatever window appeared.
     let appeared: Win[] = []
@@ -2215,7 +2236,17 @@ server.registerTool(
       throw new Error(`cwd "${cwd}" is not a directory`)
     }
 
-    const proc = Bun.spawn([bin, ...argv], {
+    // A command that opens a window gets placed on the agent's workspace too.
+    // isLaunch() is what keeps this honest: "wpctl set-volume" and "hyprctl
+    // dispatch close" are about where the person already is, and relocating
+    // those would be actively wrong. Wrapping also means stdout belongs to
+    // hyprctl rather than the program, which is fine for a launch and is
+    // exactly why it is not done for everything.
+    const runArgv = isLaunch([bin, ...argv])
+      ? onWorkspace([bin, ...argv], CONFINE_WS)
+      : [bin, ...argv]
+
+    const proc = Bun.spawn(runArgv, {
       cwd,
       stdin: "ignore",
       stdout: "pipe",

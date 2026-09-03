@@ -45,7 +45,7 @@ export class ClaudeRunner implements AgentRunner {
                 type: "stdio",
                 command: opts.bunPath,
                 args: ["run", opts.serverScript],
-                env: { DESKTOP_AGENT_IDENTITY: "claude" },
+                env: { DESKTOP_AGENT_IDENTITY: "claude", DESKTOP_AGENT_WORKSPACE: String(opts.workspace) },
               },
             },
           },
@@ -74,6 +74,7 @@ export class ClaudeRunner implements AgentRunner {
       ],
       env: {
         DESKTOP_AGENT_IDENTITY: "claude",
+        DESKTOP_AGENT_WORKSPACE: String(opts.workspace),
       },
     }
   }

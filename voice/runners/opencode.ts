@@ -34,7 +34,7 @@ export class OpenCodeRunner implements AgentRunner {
               desktop: {
                 type: "local",
                 command: [opts.bunPath, "run", opts.serverScript],
-                environment: { DESKTOP_AGENT_IDENTITY: "opencode" },
+                environment: { DESKTOP_AGENT_IDENTITY: "opencode", DESKTOP_AGENT_WORKSPACE: String(opts.workspace) },
                 enabled: true,
               },
             },
@@ -54,6 +54,7 @@ export class OpenCodeRunner implements AgentRunner {
       cwd: runDir,
       env: {
         DESKTOP_AGENT_IDENTITY: "opencode",
+        DESKTOP_AGENT_WORKSPACE: String(opts.workspace),
       },
     }
   }

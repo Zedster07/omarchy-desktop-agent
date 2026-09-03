@@ -26,6 +26,7 @@
 // ============================================================================
 
 import fs from "node:fs/promises"
+import { onWorkspace, confinementWorkspace } from "../voice/workspace.ts"
 import os from "node:os"
 import path from "node:path"
 
@@ -129,13 +130,24 @@ export async function ensure(opts: { command?: string; headless?: boolean } = {}
   if (opts.headless) args.push("--headless=new", "--disable-gpu")
   args.push("about:blank")
 
-  const proc = Bun.spawn(args, { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+  // A visible browser is a window, so it goes to the agent's workspace like
+  // anything else it opens. Headless has no window to place.
+  //
+  // Wrapping costs the early "exited immediately" check below, because the
+  // process we hold is then hyprctl, which returns at once. That check was an
+  // optimisation, not the safety net: if the browser fails to come up, the
+  // debugger never answers and the loop times out anyway -- a slower failure,
+  // not a missed one.
+  const ws = opts.headless ? 0 : confinementWorkspace()
+  const placed = onWorkspace(args, ws)
+  const wrapped = placed !== args
+  const proc = Bun.spawn(placed, { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
   const started = Date.now()
 
   // Wait for the debugger to answer rather than sleeping a fixed amount: a
   // cold profile takes far longer to come up than a warm one.
   while (Date.now() - started < LAUNCH_TIMEOUT_MS) {
-    if (proc.exitCode !== null) throw new Error(`browser exited immediately (code ${proc.exitCode})`)
+    if (!wrapped && proc.exitCode !== null) throw new Error(`browser exited immediately (code ${proc.exitCode})`)
     try {
       const r = await fetch(`http://127.0.0.1:${port}/json/version`, {
         signal: AbortSignal.timeout(1000),

@@ -31,7 +31,7 @@ export class GeminiRunner implements AgentRunner {
               desktop: {
                 command: opts.bunPath,
                 args: ["run", opts.serverScript],
-                env: { DESKTOP_AGENT_IDENTITY: "gemini" },
+                env: { DESKTOP_AGENT_IDENTITY: "gemini", DESKTOP_AGENT_WORKSPACE: String(opts.workspace) },
               },
             },
           },
@@ -59,6 +59,7 @@ export class GeminiRunner implements AgentRunner {
       cwd: runDir,
       env: {
         DESKTOP_AGENT_IDENTITY: "gemini",
+        DESKTOP_AGENT_WORKSPACE: String(opts.workspace),
       },
     }
   }

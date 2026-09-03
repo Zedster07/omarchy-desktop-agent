@@ -32,6 +32,8 @@ export class CodexRunner implements AgentRunner {
         `mcp_servers.desktop.args=["run", "${opts.serverScript}"]`,
         "-c",
         'mcp_servers.desktop.env.DESKTOP_AGENT_IDENTITY="codex"',
+        "-c",
+        `mcp_servers.desktop.env.DESKTOP_AGENT_WORKSPACE="${opts.workspace}"`,
         // NOT --dangerously-bypass-approvals-and-sandbox, whose own help says
         // "EXTREMELY DANGEROUS. Intended solely for running in environments
         // that are externally sandboxed." This is not such an environment.
@@ -42,6 +44,7 @@ export class CodexRunner implements AgentRunner {
       ],
       env: {
         DESKTOP_AGENT_IDENTITY: "codex",
+        DESKTOP_AGENT_WORKSPACE: String(opts.workspace),
       },
     }
   }
