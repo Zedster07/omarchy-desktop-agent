@@ -98,7 +98,7 @@ voxtype transcribe "$WAV" 2>/dev/null | grep -vE '^(Loading|Audio format|Process
 # faster-whisper here mirrors ai-coworker/stt/server.py: VAD trimming before
 # decode, forced language, temperature 0, and the confidence thresholds that
 # drop silence hallucinations.
-FW_VENV="${FW_VENV:-/home/dada/fedora/ai-coworker/stt/venv}"
+FW_VENV="${FW_VENV:-$HOME/.local/share/desktop-agent/venv}"
 if [[ -x "$FW_VENV/bin/python" ]]; then
   printf '  \033[2mfaster-whisper (base, VAD-filtered)\033[0m\n'
   "$FW_VENV/bin/python" - "$WAV" <<'PY' 2>/dev/null | sed 's/^/    /'

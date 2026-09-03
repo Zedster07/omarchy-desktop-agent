@@ -364,10 +364,8 @@ Item {
     command: ["bash", "-c",
       "[ -e \"$1\" ] && echo disabled || echo enabled; " +
       "[ -r \"$2\" ] && echo readable || echo unreadable; " +
-      // Voice readiness is voxtype now, not a socket of our own. This still
-      // asked about desktop-agent-voice.sock long after that daemon was
-      // deleted, so the panel reported "offline" on a perfectly working setup.
-      "command -v voxtype >/dev/null && echo voice-up || echo voice-down",
+      // Voice readiness checks the desktop-agent-voice daemon's UNIX socket.
+      "[ -S \"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock\" ] && echo voice-up || echo voice-down",
       "probe", root.disabledFlag, root.policyPath]
     stdout: SplitParser {
       onRead: function(line) {

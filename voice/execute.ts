@@ -214,7 +214,14 @@ let detail = ""
 
 for (let i = 0; i < plan.length; i++) {
   const step = plan[i]
-  const proc = Bun.spawn(step, { stdout: "pipe", stderr: "pipe" })
+  let proc: ReturnType<typeof Bun.spawn>
+  try {
+    proc = Bun.spawn(step, { stdout: "pipe", stderr: "pipe" })
+  } catch (e: any) {
+    failedAt = i
+    detail = (e?.message || "failed to spawn command").split("\n")[0]
+    break
+  }
   const code = await proc.exited
   const out = (await new Response(proc.stdout).text()).trim()
   const err = (await new Response(proc.stderr).text()).trim()
