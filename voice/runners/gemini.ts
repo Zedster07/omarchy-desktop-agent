@@ -5,6 +5,11 @@ import { mkdirSync, writeFileSync } from "node:fs"
 export class GeminiRunner implements AgentRunner {
   readonly id = "gemini"
   readonly name = "Gemini CLI"
+  readonly confined = false
+  // --allowed-mcp-server-names restricts MCP SERVERS, not built-in tools, so
+  // run_shell_command survives and --approval-mode yolo auto-approves it.
+  readonly unconfinedReason =
+    "Gemini keeps run_shell_command; --allowed-mcp-server-names only filters MCP servers"
 
   isAvailable(): boolean {
     return Bun.which("gemini") !== null

@@ -231,6 +231,25 @@ case "${1:-doctor}" in
       exit 1
     fi
     ok "confined: $(echo "$tools" | tr ',' '\n' | grep -c 'mcp__desktop__') desktop tools, nothing else"
+
+    # The check above only covers Claude, which is the only runner that claims
+    # to be confinable. Say so out loud rather than letting a green tick read
+    # as "the agent tier is safe" when three other runners can be selected.
+    echo
+    bold "Other runners"
+    for r in gemini codex opencode; do
+      if command -v "$r" >/dev/null 2>&1; then
+        printf '  \033[33m!\033[0m %-9s installed — NOT confinable, keeps its own shell.\n' "$r"
+      else
+        printf '  \033[2m·\033[0m %-9s not installed\n' "$r"
+      fi
+    done
+    allow=$(desktop-agent-config get agent.allowUnconfined 2>/dev/null || echo false)
+    if [[ "$allow" == "true" ]]; then
+      bad "agent.allowUnconfined is TRUE — an unconfined runner may be used, and the desktop policy will not see what it does through its own shell"
+    else
+      ok "agent.allowUnconfined is false — only confined runners will run"
+    fi
     ;;
 
   mcp-install)

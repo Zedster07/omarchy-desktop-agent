@@ -13,7 +13,7 @@
 // which fails closed when the plugin that serves it is not loaded.
 
 import { settingStr } from "./settings.ts"
-import { getRunner, listAvailableRunners, taskPrompt } from "./runners/index.ts"
+import { getRunner, listAvailableRunners, unconfinedRunners, taskPrompt } from "./runners/index.ts"
 
 export { taskPrompt }
 
@@ -75,17 +75,46 @@ export async function handOff(
   const timeoutMs = opts.timeoutMs ?? 300_000
   const workspace = opts.workspace ?? 10
 
-  const preferred = (await settingStr("ai.provider", "auto")).trim().toLowerCase()
+  // agent.runner, NOT ai.provider.
+  //
+  // They are different jobs that happened to share a setting: ai.provider
+  // picks the model that turns a sentence into commands (one small call,
+  // cheap, no tools), while this picks the CLI that drives your desktop for
+  // minutes with tools in its hands. Sharing one key meant choosing a planner
+  // silently changed who was allowed to act -- and choosing an agent silently
+  // changed who did the planning.
+  const preferred = (await settingStr("agent.runner", "auto")).trim().toLowerCase()
   const runner = getRunner(preferred)
 
   if (!runner) {
+    const loose = unconfinedRunners().map(r => r.name).join(", ")
     const available = listAvailableRunners().map(r => r.name).join(", ")
     return {
       ok: false,
-      summary: available
-        ? `No compatible agent CLI for "${preferred}" (installed: ${available})`
-        : "No agent CLI installed (install Claude, Gemini, Codex, or OpenCode)",
+      summary: loose
+        // Naming the ones that exist but were not chosen, because otherwise
+        // "no agent CLI" is a lie to someone who has three installed.
+        ? `No confinable agent CLI. ${loose} installed but cannot be limited to the desktop tools — set ai.provider and agent.allowUnconfined to use one anyway`
+        : available
+          ? `No compatible agent CLI for "${preferred}" (installed: ${available})`
+          : "No agent CLI installed (install Claude, Gemini, Codex, or OpenCode)",
       report: "",
+    }
+  }
+
+  // An unconfined runner has to be asked for by name AND opted into. Naming it
+  // is choosing a tool; this is consenting to what it gives up. The whole
+  // premise of running an agent unattended is that the policy engine sees
+  // every action, and it does not see anything an agent does through its own
+  // shell.
+  if (!runner.confined) {
+    const allow = (await settingStr("agent.allowUnconfined", "false")) === "true"
+    if (!allow) {
+      return {
+        ok: false,
+        summary: `${runner.name} cannot be confined to the desktop tools — ${runner.unconfinedReason ?? "it keeps its own shell"}. Set agent.allowUnconfined to run it anyway.`,
+        report: "",
+      }
     }
   }
 
@@ -105,7 +134,10 @@ export async function handOff(
   })
 
   if (!prepared) {
-    return { ok: false, summary: `Could not confine ${runner.name} — refusing to run`, report: "" }
+    // Not "could not confine" any more: prepare() failing means its config
+    // files could not be written, which is a different fault and was
+    // misleading for the three runners that never confine anything.
+    return { ok: false, summary: `Could not set up ${runner.name} — refusing to run`, report: "" }
   }
 
   const proc = Bun.spawn(prepared.argv, {

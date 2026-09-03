@@ -20,9 +20,17 @@ export function listAvailableRunners(): AgentRunner[] {
 
 /**
  * Find the runner to use.
- * - If preference is explicitly specified (e.g. "gemini", "codex"), returns it if available.
- * - If preference is "auto" (or not found), returns the first available runner in priority order:
- *   Claude -> Gemini -> Codex -> OpenCode.
+ *
+ * "auto" only ever picks a CONFINED runner. The order used to be
+ * Claude -> Gemini -> Codex -> OpenCode with no distinction between them,
+ * which meant a machine without Claude Code silently got an agent holding its
+ * own shell -- the desktop policy bypassed, no warning, nothing in the audit
+ * log. Falling back from a confined runner to an unconfined one is not a
+ * fallback, it is a different feature with the safety removed.
+ *
+ * An unconfined runner therefore has to be asked for BY NAME, and the caller
+ * still has to opt in (see handOff). Naming it is not the same as consenting
+ * to it.
  */
 export function getRunner(preference?: string): AgentRunner | null {
   const normalized = (preference || "auto").trim().toLowerCase()
@@ -30,8 +38,13 @@ export function getRunner(preference?: string): AgentRunner | null {
   if (normalized && normalized !== "auto") {
     const match = ALL_RUNNERS.find((r) => r.id === normalized)
     if (match && match.isAvailable()) return match
+    return null
   }
 
-  // Auto fallback
-  return ALL_RUNNERS.find((r) => r.isAvailable()) ?? null
+  return ALL_RUNNERS.find((r) => r.isAvailable() && r.confined) ?? null
+}
+
+/** Available runners that cannot be reduced to the desktop tools. */
+export function unconfinedRunners(): AgentRunner[] {
+  return ALL_RUNNERS.filter((r) => r.isAvailable() && !r.confined)
 }

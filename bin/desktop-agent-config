@@ -50,6 +50,18 @@ DEFAULTS = {
         # Write a markdown report after every agent run and open it. The
         # report lands in ~/.local/state/desktop-agent/runs/ either way.
         "openReport": True,
+        # Which agent CLI drives the desktop at tier 4: auto | claude |
+        # gemini | codex | opencode. "auto" only ever picks a runner that can
+        # be confined to the desktop tools. Separate from ai.provider, which
+        # picks the model that does the planning and holds no tools.
+        "runner": "auto",
+        # Allow an agent CLI that cannot be limited to the desktop tools.
+        #
+        # Off, and it should stay off. The desktop policy only sees calls that
+        # go through the desktop MCP server; an agent holding its own shell
+        # runs hyprctl directly and nothing is logged or approved. Turning this
+        # on does not weaken the policy -- it lets the agent walk around it.
+        "allowUnconfined": False,
     },
     "command": {"enabled": True, "confirm": "destructive-only",
                 "thirdParty": True, "threshold": 62},

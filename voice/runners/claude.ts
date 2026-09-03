@@ -16,6 +16,9 @@ const DENIED_TOOLS = [
 export class ClaudeRunner implements AgentRunner {
   readonly id = "claude"
   readonly name = "Claude Code"
+  // Verified by `desktop-agent agent-check`: the deny list plus
+  // --strict-mcp-config leave exactly the 17 mcp__desktop__* tools.
+  readonly confined = true
 
   isAvailable(): boolean {
     return Bun.which("claude") !== null
