@@ -420,6 +420,17 @@ Bun.listen({
           }
           break
         case "stop": await handleStop(); break
+        case "text": {
+          // A typed request takes exactly the path a spoken one does after
+          // transcription -- same tiers, same policy, same approval. The only
+          // difference is that it skipped the microphone.
+          const phrase = raw.toString().trim().slice(5).trim()
+          if (phrase) {
+            log(`text: ${phrase}`)
+            await runCommand(phrase)
+          }
+          break
+        }
         case "cancel":
           recorder.cancel()
           await clearHud({ state: "idle" }, 0)

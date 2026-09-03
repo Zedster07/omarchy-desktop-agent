@@ -11,3 +11,4 @@ HudScanlines 1.0 HudScanlines.qml
 HudCore 1.0 HudCore.qml
 SettingRow 1.0 SettingRow.qml
 TabBar 1.0 TabBar.qml
+CommandBar 1.0 CommandBar.qml

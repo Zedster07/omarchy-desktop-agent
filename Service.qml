@@ -67,6 +67,24 @@ Item {
   readonly property var currentRequest: pending.length > 0 ? pending[0] : null
   readonly property int pendingCount: pending.length
 
+  // ------------------------------------------------------------ text prompt
+
+  property bool promptOpen: false
+  property string promptPhase: "idle"
+  property string promptResult: ""
+
+  // The daemon owns the pipeline, so the bar only collects a sentence and
+  // hands it over -- exactly as a spoken one arrives. Sent over the same
+  // socket rather than a second code path.
+  function submitPrompt(text) {
+    root.promptPhase = "working"
+    root.promptResult = ""
+    promptProc.command = ["bash", "-c",
+      "printf 'text %s' \"$1\" | socat - \"UNIX-CONNECT:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock\" >/dev/null 2>&1 || true",
+      "prompt", text]
+    promptProc.running = true
+  }
+
   // ----------------------------------------------------------------- voice
 
   property string voiceState: "idle"
@@ -244,6 +262,15 @@ Item {
     if ("elapsed" in p) root.voiceElapsed = Number(p.elapsed) || 0
     if ("levels" in p && Array.isArray(p.levels)) root.voiceLevels = p.levels
     voiceWatchdog.restart()
+
+    // While the text bar is open it is the surface showing progress, so the
+    // daemon's states are mirrored onto it instead of the floating HUD.
+    if (root.promptOpen) {
+      if (root.voiceState === "done") { root.promptPhase = "done"; root.promptResult = root.voiceMatched || root.voiceTranscript }
+      else if (root.voiceState === "error") { root.promptPhase = "error"; root.promptResult = root.voiceError }
+      else if (root.voiceState === "transcribing") { root.promptPhase = "working"; root.promptResult = root.voiceMatched }
+      if (root.promptPhase === "done") promptCloseTimer.restart()
+    }
   }
 
   // Preview mode is voxtype's business now; nothing here brokers audio. Kept
@@ -300,6 +327,7 @@ Item {
   Process { id: auditProc }
   Process { id: openProc }
   Process { id: voiceCtlProc }
+  Process { id: promptProc }
 
   function probe() { if (!probeProc.running) probeProc.running = true }
   function readYolo() { if (!yoloReadProc.running) yoloReadProc.running = true }
@@ -343,6 +371,14 @@ Item {
   Timer { interval: 1000; repeat: true; running: root.yoloUntil > 0; onTriggered: root.yoloTick() }
   Timer { interval: 5000; repeat: true; running: true; onTriggered: { root.probe(); root.readYolo() } }
   Timer { id: recapTimer; interval: 25000; onTriggered: root.recap = null }
+
+  // A finished prompt closes itself, so the bar does not sit over the thing it
+  // just did. Failures stay up: you need to read those.
+  Timer {
+    id: promptCloseTimer
+    interval: 1400
+    onTriggered: if (root.promptPhase === "done") { root.promptOpen = false; root.promptPhase = "idle" }
+  }
 
   FileView {
     path: root.stateDir
@@ -394,6 +430,13 @@ Item {
     // Pushed by the voice daemon on every state change.
     function voice(payload: string): void { root.applyVoice(payload) }
 
+    /** Open the text prompt. Bound to a key; also useful from a script. */
+    function prompt(): void {
+      root.promptPhase = "idle"
+      root.promptResult = ""
+      root.promptOpen = true
+    }
+
     // Manual escape hatch, for the case the watchdog has not fired yet.
     function voiceReset(): void { root.resetVoice() }
 
@@ -427,6 +470,14 @@ Item {
     elapsed: root.voiceElapsed
     onCommit: root.voiceSend("commit")
     onDiscard: root.voiceSend("discard")
+  }
+
+  CommandBar {
+    open: root.promptOpen
+    phase: root.promptPhase
+    result: root.promptResult
+    onSubmitted: function(text) { root.submitPrompt(text) }
+    onDismissed: { root.promptOpen = false; root.promptPhase = "idle" }
   }
 
   RecapCard {

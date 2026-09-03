@@ -131,6 +131,10 @@ Add to ~/.config/hypr/bindings.lua:
     o.bind("F10", "Voice command (stop)","desktop-agent-listen stop",    { release = true })
     o.bind("SUPER + ESCAPE", "Cancel voice", "desktop-agent-listen cancel")
 
+    -- Type a request instead of speaking it. Same pipeline behind it.
+    o.bind("SUPER + SLASH", "Command prompt",
+           "omarchy-shell shell call io.github.zedster07.desktop-agent prompt")
+
 Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:
 
     hl.config({
@@ -139,6 +143,7 @@ Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:
     })
     hl.layer_rule({ match = { namespace = "omarchy-desktop-agent-voice" }, blur = true })
     hl.layer_rule({ match = { namespace = "omarchy-desktop-agent-approval" }, blur = true })
+    hl.layer_rule({ match = { namespace = "omarchy-desktop-agent-prompt" }, blur = true })
 
 BINDS
 }

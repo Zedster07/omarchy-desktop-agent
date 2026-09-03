@@ -81,6 +81,16 @@ temperature 0, no conditioning on previous text, and per-segment confidence
 thresholds. A decoder handed silence writes plausible sentences, so the
 silence never reaches it.
 
+## Two ways in
+
+**Speak it.** Hold `F9` to dictate into whatever has focus, `F10` to give a
+command.
+
+**Type it.** `SUPER + /` opens a prompt in the middle of the screen. Same
+tiers, same policy, same approval — the only difference is that it skipped the
+microphone. Useful when a name is hard to say, when the room is loud, or when
+you want to see the request before it runs.
+
 ## Four tiers, escalating
 
 Most requests never reach a model at all.
