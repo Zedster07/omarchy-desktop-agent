@@ -249,6 +249,27 @@ def install_local(model):
 def main(argv):
     cmd = argv[1] if len(argv) > 1 else "all"
 
+    if cmd == "policy-yolo":
+        # Does the POLICY permit a lease at all?
+        #
+        # Granting one from the panel writes yolo.json, but the server checks
+        # policy.yolo.enabled before honouring it. With that false the panel
+        # cheerfully counts down "full access · 50:00 left" while every single
+        # action still stops for approval -- the switch appears to work and
+        # changes nothing.
+        import re
+        path = os.path.expanduser("~/.config/desktop-agent/policy.jsonc")
+        try:
+            raw = open(path).read()
+        except OSError:
+            print("false"); return 0
+        # Comment-stripping good enough for one boolean: drop // lines, then
+        # find the yolo block and read its "enabled".
+        body = re.sub(r"^\s*//.*$", "", raw, flags=re.M)
+        m = re.search(r'"yolo"\s*:\s*\{[^}]*?"enabled"\s*:\s*(true|false)', body, re.S)
+        print("true" if (m and m.group(1) == "true") else "false")
+        return 0
+
     if cmd == "all":
         d = load()
         d["voice"]["hasRemoteKey"] = has_secret()

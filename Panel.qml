@@ -97,6 +97,20 @@ Panel {
   }
   Process { id: ipcActionProc; onExited: root.pollState() }
 
+  // Does the POLICY allow a lease at all?
+  //
+  // The panel could grant one regardless, count down "full access · 50:00
+  // left", and every action would still stop for approval, because the server
+  // checks policy.yolo.enabled before honouring the file the panel writes.
+  // Offering a switch that the thing it controls has been told to ignore is
+  // worse than not offering it.
+  property bool yoloAllowed: true
+  Process {
+    id: yoloAllowedProc
+    command: ["desktop-agent-config", "policy-yolo"]
+    stdout: SplitParser { onRead: function(line) { root.yoloAllowed = String(line).trim() === "true" } }
+  }
+
   // While the panel is open the clock has to move, or "full access · 14:59"
   // sits frozen and reads as broken.
   Timer {
@@ -169,7 +183,8 @@ Panel {
 
   readonly property string statusLine: !policyReadable ? "policy unreadable — everything refuses"
     : !policyEnabled ? "kill switch on — every gated action refuses"
-    : yoloActive ? "full access · " + yoloClock + " left"
+    : yoloActive ? (yoloAllowed ? "full access · " + yoloClock + " left"
+                                : "full access granted but ignored by policy")
     : listening ? "listening"
     : "policy active"
 
@@ -183,6 +198,7 @@ Panel {
   function refresh() {
     if (service) { service.probe(); service.readYolo() }
     else root.pollState()
+    yoloAllowedProc.running = true
     if (!cfgProc.running) cfgProc.running = true
   }
   function toggleKillswitch() { if (service) service.toggleKillswitch() }
@@ -440,22 +456,26 @@ Panel {
               spacing: Style.spacing.md
 
               HudLabel {
-                text: root.yoloActive ? "full access · " + root.yoloClock + " left" : "full access"
+                text: !root.yoloActive ? "full access"
+                  : root.yoloAllowed ? "full access · " + root.yoloClock + " left"
+                  : "full access · not honoured"
                 tone: root.yoloActive ? Theme.caution : Color.foreground
                 color: root.yoloActive ? Theme.caution : Util.alpha(Color.foreground, 0.45)
               }
               Text {
                 width: parent.width
                 wrapMode: Text.WordWrap
-                text: root.yoloActive
-                  ? "Approvals are being granted without asking. Destructive commands and anything denied still stop."
-                  : "Skip approvals for a while. Never overrides a denial, and never auto-runs rm, dd, chmod, kill, systemctl or a package manager."
+                text: !root.yoloActive
+                  ? "Skip approvals for a while. Never overrides a denial, and never auto-runs rm, dd, chmod, kill, systemctl or a package manager."
+                  : root.yoloAllowed
+                    ? "Approvals are being granted without asking. Destructive commands and anything denied still stop."
+                    : "A lease is running, but nothing is acting on it."
                 color: Util.alpha(Color.foreground, 0.62)
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
               Row {
-                visible: !root.yoloActive && root.policyEnabled
+                visible: !root.yoloActive && root.policyEnabled && root.yoloAllowed
                 spacing: Style.spacing.controlGap
                 Repeater {
                   model: [15, 30, 60]
@@ -469,6 +489,22 @@ Panel {
                   }
                 }
               }
+              // Shown whether or not a lease is running, and the running case
+              // is the one that matters: a countdown saying "full access ·
+              // 57:02 left" while every action still stops for approval is the
+              // most misleading thing this panel can display.
+              Text {
+                visible: !root.yoloAllowed && root.policyEnabled
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: root.yoloActive
+                  ? "This lease is NOT being honoured. Your policy has \"yolo\": { \"enabled\": false }, so the server ignores it and every action still asks. Set that to true in ~/.config/desktop-agent/policy.jsonc."
+                  : "Turned off in your policy. Set \"enabled\": true inside the \"yolo\" block of ~/.config/desktop-agent/policy.jsonc to allow it — until then a grant would count down and change nothing."
+                color: Util.alpha(Theme.caution, 0.85)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
               Button {
                 visible: root.yoloActive
                 text: "End full access now"
