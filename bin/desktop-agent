@@ -88,8 +88,18 @@ doctor() {
     warn "kill switch is ON — every gated action refuses"
   fi
 
-  echo; bold "Agent (optional — voice works without this)"
+  echo; bold "Agent CLIs (optional — voice works without this)"
   if have bun; then ok "bun ($(command -v bun))"; else warn "bun is missing; the MCP half will not run"; fi
+  local found_agent=0
+  for a in claude gemini codex opencode; do
+    if have "$a"; then
+      ok "$a ($(command -v "$a"))"
+      found_agent=1
+    fi
+  done
+  if [[ $found_agent -eq 0 ]]; then
+    warn "no agent CLI installed on PATH (claude, gemini, codex, opencode); tier 4 requires one"
+  fi
 
   echo; bold "Shell"
   if qs -p /usr/share/omarchy/shell ipc call io.github.zedster07.desktop-agent status >/dev/null 2>&1; then
@@ -224,37 +234,117 @@ case "${1:-doctor}" in
     ;;
 
   mcp-install)
-    # Register the MCP server that ships WITH this plugin.
-    #
-    # Point it at our own copy rather than at whatever is in ~/.config: the
-    # server, the policy engine and the approval overlay are one thing, and a
-    # plugin that half-works because it is driving someone else's server is
-    # not a plugin anyone can ship.
+    # Register the MCP server that ships WITH this plugin into Claude Code, Gemini, Codex, or OpenCode.
     have bun || { bad "bun is required for the agent half"; exit 1; }
     if [[ ! -d "$PLUGIN_DIR/server/node_modules" ]]; then
       bold "Installing server dependencies"
       (cd "$PLUGIN_DIR/server" && bun install) || { bad "bun install failed"; exit 1; }
     fi
-    python3 - "$PLUGIN_DIR" "$(command -v bun)" <<'PY'
+    target="${2:-all}"
+    bold "Registering Desktop MCP server (target: $target)"
+    python3 - "$PLUGIN_DIR" "$(command -v bun)" "$target" <<'PY'
 import json, os, shutil, sys, time
-plugin, bun = sys.argv[1], sys.argv[2]
-cfg = os.path.expanduser("~/.claude.json")
-if not os.path.exists(cfg):
-    print("  no ~/.claude.json — start Claude Code once first"); sys.exit(1)
-shutil.copy(cfg, f"{cfg}.bak.{int(time.time())}")
-d = json.load(open(cfg))
-servers = d.setdefault("mcpServers", {})
-servers["desktop"] = {
-    "type": "stdio",
-    "command": bun,
-    "args": ["run", os.path.join(plugin, "server", "server.ts")],
-    "env": {},
-}
-json.dump(d, open(cfg, "w"), indent=2)
-print(f"  registered: {os.path.join(plugin, 'server', 'server.ts')}")
-print("  (previous ~/.claude.json backed up alongside)")
+plugin, bun, target = sys.argv[1], sys.argv[2], sys.argv[3] if len(sys.argv) > 3 else "all"
+target = target.lower()
+server_ts = os.path.join(plugin, "server", "server.ts")
+installed_any = False
+
+# Claude Code
+if target in ("all", "claude"):
+    cfg = os.path.expanduser("~/.claude.json")
+    if os.path.exists(cfg):
+        try:
+            shutil.copy(cfg, f"{cfg}.bak.{int(time.time())}")
+            d = json.load(open(cfg))
+            servers = d.setdefault("mcpServers", {})
+            servers["desktop"] = {
+                "type": "stdio",
+                "command": bun,
+                "args": ["run", server_ts],
+                "env": { "DESKTOP_AGENT_IDENTITY": "claude" },
+            }
+            json.dump(d, open(cfg, "w"), indent=2)
+            print("  ✓ Claude Code (~/.claude.json): registered")
+            installed_any = True
+        except Exception as e:
+            print(f"  ✗ Claude Code: failed to update ({e})")
+    elif target == "claude":
+        print("  ✗ Claude Code: ~/.claude.json not found (start Claude Code once first)")
+
+# Gemini CLI
+if target in ("all", "gemini"):
+    cfg = os.path.expanduser("~/.gemini/settings.json")
+    if os.path.exists(os.path.dirname(cfg)):
+        try:
+            d = {}
+            if os.path.exists(cfg):
+                shutil.copy(cfg, f"{cfg}.bak.{int(time.time())}")
+                try: d = json.load(open(cfg))
+                except Exception: d = {}
+            servers = d.setdefault("mcpServers", {})
+            servers["desktop"] = {
+                "command": bun,
+                "args": ["run", server_ts],
+                "env": { "DESKTOP_AGENT_IDENTITY": "gemini" },
+            }
+            json.dump(d, open(cfg, "w"), indent=2)
+            print("  ✓ Gemini CLI (~/.gemini/settings.json): registered")
+            installed_any = True
+        except Exception as e:
+            print(f"  ✗ Gemini CLI: failed to update ({e})")
+    elif target == "gemini":
+        print("  ✗ Gemini CLI: ~/.gemini directory not found")
+
+# Codex CLI
+if target in ("all", "codex"):
+    cfg = os.path.expanduser("~/.codex/config.toml")
+    if os.path.exists(os.path.dirname(cfg)):
+        try:
+            content = ""
+            if os.path.exists(cfg):
+                content = open(cfg).read()
+                shutil.copy(cfg, f"{cfg}.bak.{int(time.time())}")
+            snippet = f'\n[mcp_servers.desktop]\ncommand = "{bun}"\nargs = ["run", "{server_ts}"]\nenv = {{ DESKTOP_AGENT_IDENTITY = "codex" }}\n'
+            if "[mcp_servers.desktop]" in content:
+                print("  ✓ Codex CLI (~/.codex/config.toml): desktop server entry already present")
+            else:
+                with open(cfg, "a") as f:
+                    f.write(snippet)
+                print("  ✓ Codex CLI (~/.codex/config.toml): registered")
+            installed_any = True
+        except Exception as e:
+            print(f"  ✗ Codex CLI: failed to update ({e})")
+    elif target == "codex":
+        print("  ✗ Codex CLI: ~/.codex directory not found")
+
+# OpenCode CLI
+if target in ("all", "opencode"):
+    cfg = os.path.expanduser("~/.config/opencode/opencode.json")
+    if os.path.exists(os.path.dirname(cfg)):
+        try:
+            d = {}
+            if os.path.exists(cfg):
+                shutil.copy(cfg, f"{cfg}.bak.{int(time.time())}")
+                try: d = json.load(open(cfg))
+                except Exception: d = {}
+            mcp = d.setdefault("mcp", {})
+            mcp["desktop"] = {
+                "type": "local",
+                "command": [bun, "run", server_ts],
+                "environment": { "DESKTOP_AGENT_IDENTITY": "opencode" },
+                "enabled": True,
+            }
+            json.dump(d, open(cfg, "w"), indent=2)
+            print("  ✓ OpenCode CLI (~/.config/opencode/opencode.json): registered")
+            installed_any = True
+        except Exception as e:
+            print(f"  ✗ OpenCode CLI: failed to update ({e})")
+    elif target == "opencode":
+        print("  ✗ OpenCode CLI: ~/.config/opencode directory not found")
+
+print(f"\n  Server: {server_ts}")
 PY
-    ok "MCP server registered — restart Claude Code to pick it up"
+    ok "MCP server registration complete"
     ;;
 
   install-stt-unit)

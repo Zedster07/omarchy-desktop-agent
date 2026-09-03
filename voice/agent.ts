@@ -6,88 +6,19 @@
 // project already does, so this tier is a hand-off rather than new machinery.
 //
 // The safety comes from the policy engine, and the agent must be unable to
-// step around it. That takes three flags, and the obvious one does not work:
+// step around it. We support multiple agent CLIs (Claude Code, Gemini CLI,
+// Codex, OpenCode) through the runner abstraction in ./runners.
 //
-//   --allowedTools mcp__desktop__*    DOES NOT RESTRICT ANYTHING under
-//                                     bypassPermissions. It marks tools as
-//                                     pre-approved; it is not an allowlist.
-//                                     This was the original approach and it
-//                                     left the agent holding Bash, Read, Write,
-//                                     Edit, WebFetch, WebSearch, Agent, Cron*
-//                                     and every other MCP server on the
-//                                     machine. It could -- and did -- run
-//                                     hyprctl through Bash, so the desktop
-//                                     policy never saw the call. The policy was
-//                                     set to "enabled": false at the time and
-//                                     the task still ran.
-//
-//   --settings <deny list>            what actually removes the built-ins. Every
-//                                     tool that can read a file, write one, run
-//                                     a command, reach the network or spawn
-//                                     another agent is denied by name, so the
-//                                     only way to touch this machine is through
-//                                     a desktop_* tool -- which is exactly the
-//                                     surface the policy engine guards.
-//
-//   --strict-mcp-config --mcp-config  loads ONLY the desktop server. Without
-//                                     it the agent inherits whatever else the
-//                                     user has configured (figma, atlassian,
-//                                     gmail...), none of which the policy knows
-//                                     anything about.
-//
-//   --permission-mode bypassPermissions
-//                                     Claude Code must not stop to ask, because
-//                                     the person is talking, not watching a
-//                                     terminal. Every gated action still raises
-//                                     the desktop policy's own approval overlay,
-//                                     which fails closed when the plugin that
-//                                     serves it is not loaded.
-//
-// So "bypass" means "do not add a SECOND prompt on top of the one the policy
-// already shows". It does NOT mean the agent is unconstrained -- the deny list
-// and the strict MCP config are what make that true, and they are verified by
-// asking the agent to enumerate its own tools: `desktop-agent agent-check`.
+// Every gated action still raises the desktop policy's own approval overlay,
+// which fails closed when the plugin that serves it is not loaded.
+
+import { settingStr } from "./settings.ts"
+import { getRunner, listAvailableRunners, taskPrompt } from "./runners/index.ts"
+
+export { taskPrompt }
 
 const HOME = process.env.HOME!
 const STATE = `${HOME}/.local/state/desktop-agent`
-
-// Denied by name. An allowlist would be safer in principle, but Claude Code
-// has no "only these" switch that survives bypassPermissions, so this has to
-// enumerate. Anything new that ships in a future release lands OUTSIDE this
-// list, which is the failure direction to keep in mind: re-run the doctor
-// check after upgrading Claude Code.
-const DENIED_TOOLS = [
-  "Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep",
-  "WebFetch", "WebSearch", "Agent", "Task", "Skill", "Workflow",
-  "CronCreate", "CronDelete", "CronList", "Monitor", "SendMessage",
-  "RemoteTrigger", "PushNotification", "DesignSync", "SendUserFile",
-  "EnterWorktree", "ExitWorktree", "ToolSearch", "TaskOutput", "TaskStop",
-  "ScheduleWakeup", "ListAgents", "ReportFindings", "Artifact",
-  "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool",
-  "EndConversation", "AskUserQuestion", "ExitPlanMode", "EnterPlanMode",
-]
-
-/**
- * Write the two config files the hand-off runs under, and return their paths.
- * Generated rather than shipped because the MCP command line depends on where
- * the plugin is installed and which bun is on PATH.
- */
-function confine(): { settings: string; mcp: string } | null {
-  const bun = Bun.which("bun")
-  const server = new URL("../server/server.ts", import.meta.url).pathname
-  if (!bun) return null
-  const settings = `${STATE}/agent-settings.json`
-  const mcp = `${STATE}/agent-mcp.json`
-  try {
-    require("node:fs").mkdirSync(STATE, { recursive: true })
-    require("node:fs").writeFileSync(settings,
-      JSON.stringify({ permissions: { deny: DENIED_TOOLS } }, null, 2))
-    require("node:fs").writeFileSync(mcp, JSON.stringify({
-      mcpServers: { desktop: { type: "stdio", command: bun, args: ["run", server], env: {} } },
-    }, null, 2))
-  } catch { return null }
-  return { settings, mcp }
-}
 
 const SHELL_IPC = ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call"]
 
@@ -108,53 +39,6 @@ export async function overlayReady(target: string): Promise<boolean> {
     await p.exited
     return out.includes("enabled")
   } catch { return false }
-}
-
-function taskPrompt(phrase: string, workspace: number): string {
-  const placement = workspace > 0
-    ? `\n- Anything you OPEN must go to workspace ${workspace}, so it does not land in the middle of what the person is doing. Launch with:\n    hyprctl dispatch 'hl.dsp.exec_cmd("[workspace ${workspace} silent] <command>")'\n  "silent" places the window there without moving their focus. Do not switch workspaces yourself.`
-    : ""
-  return `You are driving a Linux desktop on behalf of someone who spoke this request out loud:
-
-"${phrase}"
-
-You have desktop tools: screenshot, click, type, key, run, window and workspace
-control. Use them to carry the request out.
-
-How to work here:
-- The person is speaking, not watching a terminal. They will see a short summary
-  at the end and nothing in between, so do not ask questions -- make the
-  sensible choice and say what you chose.
-- Prefer a command over driving the GUI when one exists. A screenshot plus five
-  clicks to do what one command does is slower and more fragile.
-- Some actions will raise an approval prompt on their screen. That is expected.
-  If one is denied, stop and report it rather than looking for another way
-  around: a refusal is an answer.
-- Stop when the request is done. Do not continue into related work nobody asked
-  for.${placement}
-
-When you are done, REPORT. A spoken request has no scrollback: if you do not
-say where something went, it is lost, and "done" is not an answer to a
-question that asked for one.
-
-Reply with a short markdown report, and nothing before it:
-
-# <one line, past tense, what you did>
-
-<one short paragraph, or up to five bullets: the steps you actually took, in
-order. Say what you found, not just what you ran.>
-
-**Result:** <the actual answer, if one was asked for -- the number, the
-ranking, the recommendation. Write it here in full; do not say "see the file".>
-
-**Files:** <full path of anything you created or changed, one per line. Write
-"none" if you created nothing.>
-
-**Problems:** <anything denied, missing, or left unfinished. "none" if it all
-worked.>
-
-The first line becomes the one-line summary the person sees, so make it stand
-on its own.`
 }
 
 // The one running hand-off, so it can be stopped.
@@ -190,22 +74,47 @@ export async function handOff(
 ): Promise<AgentOutcome> {
   const timeoutMs = opts.timeoutMs ?? 300_000
   const workspace = opts.workspace ?? 10
-  if (!Bun.which("claude")) {
-    return { ok: false, summary: "No agent CLI installed", report: "" }
+
+  const preferred = (await settingStr("ai.provider", "auto")).trim().toLowerCase()
+  const runner = getRunner(preferred)
+
+  if (!runner) {
+    const available = listAvailableRunners().map(r => r.name).join(", ")
+    return {
+      ok: false,
+      summary: available
+        ? `No compatible agent CLI for "${preferred}" (installed: ${available})`
+        : "No agent CLI installed (install Claude, Gemini, Codex, or OpenCode)",
+      report: "",
+    }
   }
 
-  // No confinement, no hand-off. Running unconfined would hand a model Bash on
-  // the user's machine with no prompt, which is not a degraded mode of this
-  // feature -- it is a different and much worse feature.
-  const conf = confine()
-  if (!conf) return { ok: false, summary: "Could not confine the agent — refusing to run", report: "" }
+  const bun = Bun.which("bun")
+  if (!bun) {
+    return { ok: false, summary: "bun is not installed on PATH", report: "" }
+  }
 
-  const proc = Bun.spawn([
-    "claude", "-p", taskPrompt(phrase, workspace),
-    "--permission-mode", "bypassPermissions",
-    "--strict-mcp-config", "--mcp-config", conf.mcp,
-    "--settings", conf.settings,
-  ], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
+  const serverScript = new URL("../server/server.ts", import.meta.url).pathname
+
+  const prepared = await runner.prepare({
+    phrase,
+    workspace,
+    serverScript,
+    bunPath: bun,
+    stateDir: STATE,
+  })
+
+  if (!prepared) {
+    return { ok: false, summary: `Could not confine ${runner.name} — refusing to run`, report: "" }
+  }
+
+  const proc = Bun.spawn(prepared.argv, {
+    stdout: "pipe",
+    stderr: "pipe",
+    stdin: "ignore",
+    cwd: prepared.cwd,
+    env: { ...process.env, ...prepared.env },
+  })
 
   running = proc
   stopped = false
@@ -222,7 +131,7 @@ export async function handOff(
       const err = (await new Response(proc.stderr).text()).trim()
       return {
         ok: false,
-        summary: (err || out).split("\n").pop()?.slice(0, 160) || "Agent failed",
+        summary: (err || out).split("\n").pop()?.slice(0, 160) || `${runner.name} failed`,
         report: out,
       }
     }
@@ -236,5 +145,8 @@ export async function handOff(
     running = null
     clearTimeout(killer)
     clearInterval(ticker)
+    if (prepared.cleanup) {
+      try { await prepared.cleanup() } catch {}
+    }
   }
 }
