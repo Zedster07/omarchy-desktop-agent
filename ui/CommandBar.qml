@@ -35,10 +35,19 @@ Item {
 
   readonly property bool busy: phase === "working"
 
-  function show() { root.open = true; input.text = ""; root.phase = "idle"; root.result = "" }
-  function hide() { root.open = false; input.text = "" }
-
-  onOpenChanged: if (open) Qt.callLater(function() { input.forceActiveFocus() })
+  // No show()/hide() and no writing to `phase` or `result` from in here.
+  //
+  // The Service BINDS all three of those (open: root.promptOpen, phase:
+  // root.promptPhase, ...). Assigning to a bound property destroys the binding
+  // permanently, so the first submission would disconnect this bar from the
+  // daemon's state for the rest of the session -- it kept whatever it last
+  // wrote itself, which was "working", and never showed done, error or idle
+  // again even after being closed and reopened. The bar reports upward through
+  // signals and displays what it is given; it owns nothing but its own text.
+  onOpenChanged: {
+    if (open) Qt.callLater(function() { input.forceActiveFocus() })
+    else input.text = ""
+  }
 
   PanelWindow {
     id: window
@@ -190,8 +199,8 @@ Item {
         onAccepted: {
           var t = text.trim()
           if (t.length === 0) return
-          root.phase = "working"
-          root.result = ""
+          // Emit and nothing else. The Service moves the phase to "working"
+          // when it dispatches, and owns every transition after that.
           root.submitted(t)
         }
 

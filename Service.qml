@@ -83,6 +83,29 @@ Item {
       "printf 'text %s' \"$1\" | socat - \"UNIX-CONNECT:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock\" >/dev/null 2>&1 || true",
       "prompt", text]
     promptProc.running = true
+    promptAck.restart()
+  }
+
+  // Did the daemon ever pick it up?
+  //
+  // submitPrompt writes to a socket with `|| true`, so a daemon that is not
+  // running, a missing socat, or a stale socket path all fail silently and the
+  // bar sits on "working" with nothing to move it. The daemon answers within
+  // milliseconds when it is alive -- it sets a voice state before it does any
+  // work -- so if nothing has arrived after a few seconds, nothing is coming.
+  //
+  // This only covers the gap before the daemon speaks. Once it does,
+  // voiceWatchdog owns the timing, which matters because a tier-4 run is
+  // legitimately minutes long and must not be cut off here.
+  Timer {
+    id: promptAck
+    interval: 5000
+    onTriggered: {
+      if (root.promptOpen && root.promptPhase === "working" && root.voiceState === "idle") {
+        root.promptPhase = "error"
+        root.promptResult = "the voice daemon did not respond"
+      }
+    }
   }
 
   // ----------------------------------------------------------------- voice
