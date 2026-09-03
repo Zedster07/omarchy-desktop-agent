@@ -155,6 +155,15 @@ Item {
               root.result = ""
               root.submitted(t)
             }
+
+            // Escape has to be handled HERE, on the field that owns focus.
+            // A Keys handler on a sibling Item never sees it: the TextField
+            // has active focus, so the event is delivered and consumed there,
+            // and the bar had no keyboard way out at all.
+            Keys.onEscapePressed: function(event) {
+              root.dismissed()
+              event.accepted = true
+            }
           }
         }
 
@@ -173,6 +182,9 @@ Item {
             text: root.phase === "working" ? "thinking"
               : root.phase === "error" ? "failed"
               : root.phase === "done" ? "done"
+              // Escape is named because it is the reliable one: this surface
+              // holds exclusive keyboard focus, so a compositor shortcut may
+              // never reach Hyprland while it is open.
               : "enter to run · esc to close"
             tone: root.tone
             color: root.phase === "idle" ? Util.alpha(Theme.cardText, 0.45) : root.tone
@@ -191,10 +203,15 @@ Item {
       }
     }
 
+    // Backstop for the moment before the field takes focus, and for any state
+    // where it is disabled (while a request is running).
     Item {
       anchors.fill: parent
-      focus: root.open
-      Keys.onEscapePressed: root.dismissed()
+      focus: root.open && !field.activeFocus
+      Keys.onEscapePressed: function(event) {
+        root.dismissed()
+        event.accepted = true
+      }
     }
   }
 }

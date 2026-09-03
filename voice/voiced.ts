@@ -432,7 +432,12 @@ Bun.listen({
           break
         }
         case "cancel":
+          // Cancel means "stop whatever you are doing": abandon a recording
+          // AND close the text prompt. Two surfaces, one gesture -- the user
+          // should not have to know which one is listening.
+          log("cancel")
           recorder.cancel()
+          Bun.spawn([...SHELL_IPC, "promptClose"], { stdout: "ignore", stderr: "ignore" })
           await clearHud({ state: "idle" }, 0)
           break
         case "ping": socket.write("ok"); break

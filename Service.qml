@@ -411,7 +411,12 @@ Item {
         yolo: root.yoloActive,
         yoloRemaining: root.yoloRemaining,
         voice: root.voiceAvailable,
-        voiceState: root.voiceState
+        voiceState: root.voiceState,
+        // Reported so a test can ask the surface rather than guess from
+        // pixels -- which is how the last two "it did not close" readings
+        // were wrong in both directions.
+        prompt: root.promptOpen,
+        promptPhase: root.promptPhase
       })
     }
 
@@ -429,6 +434,12 @@ Item {
 
     // Pushed by the voice daemon on every state change.
     function voice(payload: string): void { root.applyVoice(payload) }
+
+    /** Close the text prompt from outside — the cancel gesture routes here. */
+    function promptClose(): void {
+      root.promptOpen = false
+      root.promptPhase = "idle"
+    }
 
     /** Open the text prompt. Bound to a key; also useful from a script. */
     function prompt(): void {
