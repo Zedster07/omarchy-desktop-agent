@@ -41,6 +41,16 @@ function configuredModel(): string {
 }
 const OLLAMA_MODEL = configuredModel()
 
+/** Which Claude model the CLI should use. Empty means the CLI's own default. */
+function configuredClaudeModel(): string {
+  try {
+    const raw = JSON.parse(
+      require("node:fs").readFileSync(
+        `${process.env.HOME}/.config/desktop-agent/settings.json`, "utf8"))
+    return String(raw?.ai?.claudeModel ?? "")
+  } catch { return "" }
+}
+
 // Ordered by preference, best first.
 //
 // A CLI agent leads and Ollama is the fallback. The local model is free and
@@ -54,7 +64,19 @@ const OLLAMA_MODEL = configuredModel()
 // So: use the good model when there is one, and keep the local one for the
 // machine that has no agent installed rather than as the everyday path.
 const CANDIDATES: Provider[] = [
-  { id: "claude",   kind: "agent", argv: p => ["claude", "-p", p],    timeoutMs: 90_000 },
+  {
+    id: "claude",
+    kind: "agent",
+    // The model is configurable because this call is latency-sensitive and
+    // small: a few thousand tokens of catalogue in, a line of JSON out. That is
+    // not the shape that needs the most capable model, and the cheaper one is
+    // 2.5x less per token.
+    argv: p => {
+      const m = process.env.DESKTOP_AGENT_CLAUDE_MODEL || configuredClaudeModel()
+      return m ? ["claude", "-p", "--model", m, p] : ["claude", "-p", p]
+    },
+    timeoutMs: 90_000,
+  },
   { id: "opencode", kind: "agent", argv: p => ["opencode", "run", p], timeoutMs: 90_000 },
   { id: "codex",    kind: "agent", argv: p => ["codex", "exec", p],   timeoutMs: 90_000 },
   { id: "gemini",   kind: "agent", argv: p => ["gemini", "-p", p],    timeoutMs: 90_000 },

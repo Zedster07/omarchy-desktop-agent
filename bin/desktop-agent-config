@@ -41,7 +41,8 @@ DEFAULTS = {
         "remoteModel": "whisper-large-v3-turbo",
         "biasPrompt": True,
     },
-    "ai": {"assist": "route+plan", "provider": "auto", "localModel": "llama3.2:3b"},
+    "ai": {"assist": "route+plan", "provider": "auto",
+           "claudeModel": "sonnet", "localModel": "llama3.2:3b"},
     "agent": {
         "overlayTarget": "io.github.zedster07.desktop-agent",
         # Anything the agent opens lands here. 0 disables confinement.

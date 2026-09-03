@@ -655,6 +655,21 @@ Panel {
 
             SettingRow {
               width: parent.width
+              visible: root.s("ai.assist", "route+plan") !== "off" && root.s("ai.provider", "auto") !== "ollama"
+              label: "claude model"
+              fontFamily: root.fontFamily
+              help: "Measured on this workload: sonnet is about 8% faster than opus and 2.5x cheaper per token, with identical answers on every test case. This call is small — a catalogue in, a line of JSON out — which is not the shape that needs the most capable model."
+              Dropdown {
+                width: parent.width
+                showLabel: false
+                options: ["sonnet", "opus", "default"]
+                value: root.s("ai.claudeModel", "sonnet")
+                onChanged: function(v) { root.setCfg("ai.claudeModel", v === "default" ? "" : v) }
+              }
+            }
+
+            SettingRow {
+              width: parent.width
               visible: root.s("ai.assist", "route+plan") !== "off"
               label: "confirm spoken commands"
               fontFamily: root.fontFamily

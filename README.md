@@ -142,6 +142,27 @@ Two rules earn their keep:
   than the digit it sounds like, and a wrong action is much worse than an
   unmatched one — an unmatched one says so.
 
+## Which model, and why sonnet
+
+The resolve call is small: a catalogue in, a line of JSON out. That is not the
+shape that needs the most capable model, so it defaults to **sonnet**.
+
+Measured on this workload, same prompts, same machine:
+
+| | median | hard cases | price per Mtok |
+|---|---|---|---|
+| sonnet | 6.1s | 7/7 | $2 in / $10 out |
+| opus | 6.6s | 7/7 | $5 in / $25 out |
+
+Identical answers on every case, including the ones that must decline or must
+escalate. Sonnet is marginally faster and 2.5x cheaper, so it is the default;
+change it in the panel's ai tab.
+
+Worth knowing where the time actually goes: most of those six seconds is
+`claude -p` process startup, not inference. Model choice barely moves it —
+which is also why a faster model is not the lever for making this feel
+instant. More registered phrases is.
+
 ## Which AI, and when
 
 Most commands never reach a model: a registered phrase is matched by string
