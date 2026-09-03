@@ -221,8 +221,13 @@ case "${1:-doctor}" in
     bold "Asking the agent what tools it holds"
     tools=$(timeout 150 claude -p "Reply with ONLY the comma-separated list of tool names you may use. No prose." \
       --permission-mode bypassPermissions \
-      --strict-mcp-config --mcp-config "$mcp" --settings "$settings" < /dev/null 2>/dev/null | tail -1)
+      --strict-mcp-config --mcp-config "$mcp" --settings "$settings" < /dev/null 2>/dev/null \
+      | tr '\n' ' ')
     if [[ -z "$tools" ]]; then bad "no answer from the agent CLI"; exit 1; fi
+    # Whole answer joined onto one line before splitting, not tail -1. A wrapped
+    # reply made tail -1 start mid-list, so the first token arrived without its
+    # mcp__desktop__ prefix and was reported as a leaked tool. A security check
+    # that cries wolf gets ignored, which is worse than not having one.
     leaked=$(echo "$tools" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^mcp__desktop__' | grep -v '^$' || true)
     if [[ -n "$leaked" ]]; then
       bad "agent holds tools outside the desktop server:"

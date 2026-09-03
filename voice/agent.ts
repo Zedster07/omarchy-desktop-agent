@@ -140,11 +140,25 @@ export async function handOff(
     return { ok: false, summary: `Could not set up ${runner.name} — refusing to run`, report: "" }
   }
 
+  // Run from a directory of its own.
+  //
+  // The daemon's cwd is the home directory, so `claude -p` treated
+  // ~/.claude/settings.local.json as PROJECT settings and loaded it. Two rules
+  // in there -- saved by an "always allow" click in some other session, with a
+  // regex containing a * that the permission parser rejects -- made every
+  // hand-off fail with an error about a grep on a file nobody had mentioned.
+  //
+  // It is also a hole in the confinement. Project settings can ADD permissions,
+  // and inheriting whatever happens to sit at the daemon's cwd is not a
+  // decision anyone made. An empty directory has no .claude/ to inherit.
+  const runDir = `${STATE}/run`
+  try { require("node:fs").mkdirSync(runDir, { recursive: true }) } catch {}
+
   const proc = Bun.spawn(prepared.argv, {
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
-    cwd: prepared.cwd,
+    cwd: prepared.cwd ?? runDir,
     env: { ...process.env, ...prepared.env },
   })
 
