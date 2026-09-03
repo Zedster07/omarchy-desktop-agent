@@ -21,7 +21,7 @@ import { filterTranscript } from "./filter.ts"
 import { resolve } from "./intents.ts"
 import { loadIntents } from "./registry.ts"
 import { resolveRequest } from "./plan.ts"
-import { handOff, overlayReady } from "./agent.ts"
+import { handOff, overlayReady, stopAgent } from "./agent.ts"
 import { setting, settingStr } from "./settings.ts"
 import { resolveTarget, listApps } from "./apps.ts"
 import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs"
@@ -514,15 +514,27 @@ Bun.listen({
           }
           break
         }
-        case "cancel":
-          // Cancel means "stop whatever you are doing": abandon a recording
-          // AND close the text prompt. Two surfaces, one gesture -- the user
-          // should not have to know which one is listening.
+        case "cancel": {
+          // Cancel means "stop whatever you are doing": abandon a recording,
+          // close the text prompt, AND kill a running agent. Three things, one
+          // gesture -- the user should not have to know which one is active.
+          //
+          // The agent was the omission that mattered. Cancel used to clear the
+          // HUD while the hand-off kept driving the desktop, so the display
+          // said idle and the machine carried on by itself.
           log("cancel")
           recorder.cancel()
+          const wasRunning = stopAgent()
           Bun.spawn([...SHELL_IPC, "promptClose"], { stdout: "ignore", stderr: "ignore" })
-          await clearHud({ state: "idle" }, 0)
+          if (wasRunning) {
+            log("cancel: stopped the running agent")
+            await clearHud({ state: "error", mode: "command", transcript: "",
+                             errorText: "stopped" }, 2000)
+          } else {
+            await clearHud({ state: "idle" }, 0)
+          }
           break
+        }
         case "ping": socket.write("ok"); break
       }
       socket.end()

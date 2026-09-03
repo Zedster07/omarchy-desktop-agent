@@ -157,6 +157,28 @@ The first line becomes the one-line summary the person sees, so make it stand
 on its own.`
 }
 
+// The one running hand-off, so it can be stopped.
+//
+// Only one runs at a time by construction -- runCommand awaits it -- so a
+// single slot is honest rather than a limitation. Without this there was no
+// stop at all: "cancel" cleared the HUD and closed the prompt while the agent
+// kept driving the desktop, which is worse than having no cancel, because it
+// looked stopped.
+let running: { kill: (sig?: number) => void } | null = null
+let stopped = false
+
+/** Stop the hand-off in flight. Returns whether there was one. */
+export function stopAgent(): boolean {
+  if (!running) return false
+  stopped = true
+  try { running.kill() } catch {}
+  // SIGKILL shortly after, in case it is wedged in a tool call and ignores the
+  // polite one. Nothing here is worth waiting on.
+  const p = running
+  setTimeout(() => { try { p.kill(9) } catch {} }, 1500)
+  return true
+}
+
 /**
  * Run the hand-off. Resolves when the agent finishes or the deadline passes.
  * `onProgress` is called with coarse status only -- the HUD is a readout, not
@@ -185,12 +207,17 @@ export async function handOff(
     "--settings", conf.settings,
   ], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
 
+  running = proc
+  stopped = false
   const killer = setTimeout(() => { try { proc.kill() } catch {} }, timeoutMs)
   const ticker = setInterval(() => opts.onProgress?.("working"), 4000)
 
   try {
     const out = (await new Response(proc.stdout).text()).trim()
     const code = await proc.exited
+    if (stopped) {
+      return { ok: false, summary: "Stopped", report: out }
+    }
     if (code !== 0) {
       const err = (await new Response(proc.stderr).text()).trim()
       return {
@@ -206,6 +233,7 @@ export async function handOff(
     const summary = (heading ? heading.slice(2) : lines.find(Boolean) ?? "").trim()
     return { ok: true, summary: summary.slice(0, 200) || "Done", report: out }
   } finally {
+    running = null
     clearTimeout(killer)
     clearInterval(ticker)
   }
