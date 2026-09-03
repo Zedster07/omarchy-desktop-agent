@@ -52,29 +52,40 @@ Item {
   PanelWindow {
     id: window
     visible: root.open
-    anchors { top: true; bottom: true; left: true; right: true }
+    // Sized to the card, not to the screen.
+    //
+    // The blur layer rule applies to whatever this surface COVERS, so a
+    // full-screen window blurred the whole desktop to show one input box. The
+    // window is the card now (plus room for its bloom, which is drawn outside
+    // the plate and would otherwise be clipped), so the frosting lands on the
+    // card and nothing else. No anchors means the compositor centres it.
     color: "transparent"
     WlrLayershell.namespace: "omarchy-desktop-agent-prompt"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: WlrKeyboardFocus.Exclusive
     exclusionMode: ExclusionMode.Ignore
+    implicitWidth: stage.width + pad * 2
+    implicitHeight: stage.height + pad * 2
 
-    // The theme's own dim, not black. A theme that dims toward its background
-    // -- or sets its own polkit scrim -- gets that here rather than a hole
-    // punched in the palette, and a light theme is not dimmed with soot.
-    Rectangle {
-      anchors.fill: parent
-      color: Theme.authScrim
-      opacity: root.open ? 1 : 0
-      Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
+    readonly property int pad: Style.space(56)
+
+    // Centred by hand. A layer surface with no anchors does not float in the
+    // middle -- it collapses, and the window renders nothing at all. Anchor
+    // two edges and push it in by half the leftover space.
+    anchors { top: true; left: true }
+    margins {
+      top: Math.max(0, (window.screen.height - window.implicitHeight) / 2)
+      left: Math.max(0, (window.screen.width - window.implicitWidth) / 2)
     }
 
-    MouseArea { anchors.fill: parent; onClicked: root.dismissed() }
-
+    // Click-outside-to-dismiss is gone with the full-screen surface: there is
+    // no outside any more. Escape closes it, which the hint says.
     Item {
       id: stage
       anchors.centerIn: parent
-      width: Math.min(Style.space(720), parent.width - Style.gapsOut * 6)
+      // Off the screen, not off the parent: the parent is now this card, so
+      // measuring against it would be circular.
+      width: Math.min(Style.space(720), window.screen.width - Style.gapsOut * 6)
       height: Math.max(input.implicitHeight, caret.implicitHeight) + Style.spacing.huge * 2
 
       opacity: root.open ? 1 : 0
