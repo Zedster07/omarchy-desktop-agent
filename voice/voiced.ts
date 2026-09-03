@@ -383,6 +383,56 @@ async function runAgent(phrase: string, why: string) {
   }, 5000)
 }
 
+
+/**
+ * Find an open window by what a person would call it.
+ *
+ * "close the app vesktop" used to have no path at all: the registry only knew
+ * how to close the window you were LOOKING at, so the planner tried pkill and
+ * then hyprctl, and safety.ts refused both -- correctly, because a misheard
+ * sentence must never reach either. The result was a refusal for one of the
+ * most ordinary requests there is.
+ *
+ * Resolving the address here makes it a registry command instead: the model
+ * never writes the hyprctl line, so there is nothing to vet. It stays
+ * destructive, so it still asks before closing anything.
+ *
+ * Matching is ordered by how confident each kind of hit is, because "close
+ * chrome" should not shut a terminal that happens to have chrome in its title.
+ */
+export async function findWindow(name: string): Promise<{ address: string; label: string } | null> {
+  const want = name.trim().toLowerCase()
+  if (!want) return null
+  let clients: any[] = []
+  try {
+    const p = Bun.spawn(["hyprctl", "-j", "clients"], { stdout: "pipe", stderr: "ignore" })
+    clients = JSON.parse(await new Response(p.stdout).text())
+  } catch { return null }
+
+  const live = clients.filter(c => c && c.address && c.mapped !== false)
+  const cls = (c: any) => String(c.class ?? c.initialClass ?? "").toLowerCase()
+  const ttl = (c: any) => String(c.title ?? c.initialTitle ?? "").toLowerCase()
+
+  const tiers = [
+    live.filter(c => cls(c) === want),
+    live.filter(c => cls(c).includes(want)),
+    live.filter(c => ttl(c).startsWith(want)),
+    live.filter(c => ttl(c).includes(want)),
+  ]
+  for (const tier of tiers) {
+    if (!tier.length) continue
+    // Most recently focused first: with two Chromium windows open, "close
+    // chrome" means the one you were last in, not an arbitrary one.
+    const pick = tier.slice().sort(
+      (a, b) => Number(a.focusHistoryID ?? 999) - Number(b.focusHistoryID ?? 999))[0]
+    return {
+      address: String(pick.address),
+      label: String(pick.title || pick.class || want).slice(0, 60),
+    }
+  }
+  return null
+}
+
 async function runCommand(phrase: string) {
   hud({ state: "transcribing", mode: "command", transcript: phrase })
   const intents = await loadIntents()
@@ -399,6 +449,36 @@ async function runCommand(phrase: string) {
   // "open". Clearing the match lets the later tiers see the phrase instead of
   // answering it with "no app called that", which was both wrong and a dead
   // end.
+  // Same shape as __launch__: a placeholder the registry cannot fill, because
+  // which address belongs to "vesktop" depends on what is open right now.
+  let resolvedTarget: { address: string; cls: string; title: string } | null = null
+
+  if (match && match.argv[0] === "__closewindow__") {
+    const spoken = match.argv.slice(1).join(" ")
+    const w = await findWindow(spoken)
+    if (w) {
+      match = {
+        ...match,
+        argv: ["hyprctl", "dispatch", `hl.dsp.window.close({ window = "address:${w.address}" })`],
+        intent: { ...match.intent, description: `Close ${w.label}` },
+      }
+      // Hand the executor the window WE resolved, so its existing
+      // "is it still there?" check guards this address rather than the one
+      // captured at key-down. That check is not ceremony: a dead address makes
+      // Hyprland fall back to the FOCUSED window, which is how a stray close
+      // once took out the wrong terminal.
+      resolvedTarget = { address: w.address, cls: spoken, title: w.label }
+    } else {
+      // Not cleared into the later tiers the way an unresolved launch is: they
+      // would reach for pkill and be refused, and "nothing called that is
+      // open" is the true answer anyway.
+      remember(phrase, `nothing open called "${spoken}"`, "refused")
+      await clearHud({ state: "error", mode: "command", transcript: phrase,
+                       errorText: `Nothing open called "${spoken}"` }, 3000)
+      return
+    }
+  }
+
   if (match && match.argv[0] === "__launch__") {
     const spoken = match.argv.slice(1).join(" ")
     const t = resolveTarget(spoken)
@@ -481,9 +561,10 @@ async function runCommand(phrase: string) {
     score: match ? match.score : 0,
     aiProposed: aiProposal ? { provider: aiProposal.provider, explanation: aiProposal.explanation } : null,
     aiRouted,
-    target: target && target.address
-      ? { address: String(target.address), cls: String(target.class ?? ""), title: String(target.title ?? "") }
-      : null,
+    target: resolvedTarget
+      ?? (target && target.address
+        ? { address: String(target.address), cls: String(target.class ?? ""), title: String(target.title ?? "") }
+        : null),
   })], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
 }
 

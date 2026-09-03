@@ -66,6 +66,28 @@
       "scope": "window"
     },
     {
+      "id": "window.closeApp",
+      "phrases": [
+        "close the app {app}",
+        "close the {app} window",
+        "close {app}",
+        "quit {app}",
+        "kill the {app} window"
+      ],
+      "slots": {
+        "app": {
+          "type": "text"
+        }
+      },
+      "run": [
+        "__closewindow__",
+        "{app}"
+      ],
+      "severity": "destructive",
+      "description": "Close a window by the app's name",
+      "scope": "window"
+    },
+    {
       "id": "window.fullscreen",
       "phrases": [
         "fullscreen",
