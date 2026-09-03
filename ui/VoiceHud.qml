@@ -279,7 +279,10 @@ Item {
       Row {
         id: pillRow
         anchors.centerIn: parent
-        spacing: Style.spacing.xl
+        // The core is a ring with its own outer glow, so its bounding box ends
+        // well inside the light it casts. Spacing that looks right between two
+        // solid elements reads as cramped here.
+        spacing: Style.spacing.huge
 
         // The same core, just small. It is the plugin's one recognisable
         // shape, so shrinking it beats swapping in a different indicator --

@@ -47,6 +47,9 @@ DEFAULTS = {
         "overlayTarget": "io.github.zedster07.desktop-agent",
         # Anything the agent opens lands here. 0 disables confinement.
         "workspace": 10,
+        # Write a markdown report after every agent run and open it. The
+        # report lands in ~/.local/state/desktop-agent/runs/ either way.
+        "openReport": True,
     },
     "command": {"enabled": True, "confirm": "destructive-only",
                 "thirdParty": True, "threshold": 62},

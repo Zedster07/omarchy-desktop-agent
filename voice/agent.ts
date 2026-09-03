@@ -93,7 +93,10 @@ const SHELL_IPC = ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call"]
 
 export interface AgentOutcome {
   ok: boolean
+  /** First line of the report: what the HUD shows. */
   summary: string
+  /** The whole markdown report, for the file the person can open. */
+  report: string
 }
 
 /** The policy overlay must be live, or every gated action fails closed. */
@@ -130,8 +133,28 @@ How to work here:
 - Stop when the request is done. Do not continue into related work nobody asked
   for.${placement}
 
-Reply with ONE short sentence describing what you actually did, in the past
-tense. No preamble, no markdown.`
+When you are done, REPORT. A spoken request has no scrollback: if you do not
+say where something went, it is lost, and "done" is not an answer to a
+question that asked for one.
+
+Reply with a short markdown report, and nothing before it:
+
+# <one line, past tense, what you did>
+
+<one short paragraph, or up to five bullets: the steps you actually took, in
+order. Say what you found, not just what you ran.>
+
+**Result:** <the actual answer, if one was asked for -- the number, the
+ranking, the recommendation. Write it here in full; do not say "see the file".>
+
+**Files:** <full path of anything you created or changed, one per line. Write
+"none" if you created nothing.>
+
+**Problems:** <anything denied, missing, or left unfinished. "none" if it all
+worked.>
+
+The first line becomes the one-line summary the person sees, so make it stand
+on its own.`
 }
 
 /**
@@ -146,14 +169,14 @@ export async function handOff(
   const timeoutMs = opts.timeoutMs ?? 300_000
   const workspace = opts.workspace ?? 10
   if (!Bun.which("claude")) {
-    return { ok: false, summary: "No agent CLI installed" }
+    return { ok: false, summary: "No agent CLI installed", report: "" }
   }
 
   // No confinement, no hand-off. Running unconfined would hand a model Bash on
   // the user's machine with no prompt, which is not a degraded mode of this
   // feature -- it is a different and much worse feature.
   const conf = confine()
-  if (!conf) return { ok: false, summary: "Could not confine the agent — refusing to run" }
+  if (!conf) return { ok: false, summary: "Could not confine the agent — refusing to run", report: "" }
 
   const proc = Bun.spawn([
     "claude", "-p", taskPrompt(phrase, workspace),
@@ -170,12 +193,18 @@ export async function handOff(
     const code = await proc.exited
     if (code !== 0) {
       const err = (await new Response(proc.stderr).text()).trim()
-      return { ok: false, summary: (err || out).split("\n").pop()?.slice(0, 160) || "Agent failed" }
+      return {
+        ok: false,
+        summary: (err || out).split("\n").pop()?.slice(0, 160) || "Agent failed",
+        report: out,
+      }
     }
-    // The agent was asked for one sentence; take the last non-empty line in
-    // case it added anything before it.
-    const summary = out.split("\n").map(l => l.trim()).filter(Boolean).pop() ?? ""
-    return { ok: true, summary: summary.slice(0, 200) || "Done" }
+    // The report's first heading is the summary. Falling back to the first
+    // non-empty line covers a model that skipped the "#".
+    const lines = out.split("\n").map(l => l.trim())
+    const heading = lines.find(l => l.startsWith("# "))
+    const summary = (heading ? heading.slice(2) : lines.find(Boolean) ?? "").trim()
+    return { ok: true, summary: summary.slice(0, 200) || "Done", report: out }
   } finally {
     clearTimeout(killer)
     clearInterval(ticker)

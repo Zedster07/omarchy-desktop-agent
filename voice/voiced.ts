@@ -344,6 +344,34 @@ async function runAgent(phrase: string, why: string) {
 
   const out = await handOff(phrase, { workspace, onProgress: tick })
   log(`agent: ${out.ok ? "done" : "failed"} — ${out.summary}`)
+
+  // Leave the report somewhere it can be read.
+  //
+  // A spoken request has no scrollback: the HUD shows one line for a few
+  // seconds and then the whole run is gone, including where any file was put.
+  // The daemon writes the file rather than asking the agent to -- writing is a
+  // policy-gated tool, and making the person approve a prompt just to receive
+  // their own summary is absurd.
+  //
+  // Opened on the CURRENT workspace, deliberately, even though everything the
+  // agent opens is confined to its own. The report is for the person, so it
+  // goes where the person is.
+  if (out.report.trim()) {
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+    const dir = `${STATE}/runs`
+    const file = `${dir}/${stamp}.md`
+    try {
+      mkdirSync(dir, { recursive: true })
+      await Bun.write(file, `> ${phrase}\n\n${out.report.trim()}\n`)
+      await Bun.write(`${STATE}/last-run.md`, `> ${phrase}\n\n${out.report.trim()}\n`)
+      const viewer = Bun.which("omawrite")
+      if (viewer && (await settingStr("agent.openReport", "true")) !== "false") {
+        Bun.spawn([viewer, file], { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
+      }
+    } catch (e) {
+      log(`agent: could not write report — ${e}`)
+    }
+  }
   await clearHud({
     state: out.ok ? "done" : "error",
     mode: "command",
