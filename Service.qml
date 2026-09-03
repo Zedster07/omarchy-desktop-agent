@@ -226,6 +226,10 @@ Item {
   readonly property int voiceBudgetMs: {
     if (root.voiceState === "listening") return 90000
     if (root.voiceState === "transcribing") return 30000
+    // The agent tier drives a real desktop and can legitimately take minutes.
+    // Its own hand-off gives up at 300s, so this has to outlast that or the
+    // watchdog clears the HUD out from under a task that is still running.
+    if (root.voiceState === "working") return 320000
     if (root.voiceState === "preview") return 60000
     if (root.voiceState === "done" || root.voiceState === "error") return 6000
     return 0
@@ -268,7 +272,7 @@ Item {
     if (root.promptOpen) {
       if (root.voiceState === "done") { root.promptPhase = "done"; root.promptResult = root.voiceMatched || root.voiceTranscript }
       else if (root.voiceState === "error") { root.promptPhase = "error"; root.promptResult = root.voiceError }
-      else if (root.voiceState === "transcribing") { root.promptPhase = "working"; root.promptResult = root.voiceMatched }
+      else if (root.voiceState === "transcribing" || root.voiceState === "working") { root.promptPhase = "working"; root.promptResult = root.voiceMatched }
       if (root.promptPhase === "done") promptCloseTimer.restart()
     }
   }

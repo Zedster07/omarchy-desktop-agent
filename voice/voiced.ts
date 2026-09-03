@@ -24,7 +24,7 @@ import { resolveRequest } from "./plan.ts"
 import { handOff, overlayReady } from "./agent.ts"
 import { setting, settingStr } from "./settings.ts"
 import { resolveTarget, listApps } from "./apps.ts"
-import { existsSync, mkdirSync, readFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs"
 import { unlink } from "node:fs/promises"
 
 const HOME = process.env.HOME!
@@ -43,7 +43,10 @@ type Mode = "dictate" | "command"
 function log(msg: string) {
   try {
     mkdirSync(`${HOME}/.local/share/desktop-agent`, { recursive: true })
-    Bun.write(LOG, `${new Date().toISOString()} ${msg}\n`).catch(() => {})
+    // appendFileSync, not Bun.write: Bun.write REPLACES the file, so this log
+    // only ever held the single most recent line. Every earlier diagnosis that
+    // leaned on it was reading a one-line file and calling it a history.
+    appendFileSync(LOG, `${new Date().toISOString()} ${msg}\n`)
   } catch {}
   console.error(msg)
 }
@@ -302,6 +305,54 @@ async function handleStop() {
   await runCommand(verdict.text)
 }
 
+// ---- tier 4: hand it to something that can see the screen.
+//
+// This tier does not propose an argv for approval the way tier 3 does, because
+// there is no single command to show -- the agent decides as it goes. The
+// safety is per-action instead of up-front: every gated thing it touches
+// raises the desktop policy's own approval overlay. That overlay is therefore
+// a hard precondition, not a nicety. If it is not live, gated actions fail
+// closed and the agent would grind through a task it cannot finish, so this
+// refuses to start rather than half-running.
+async function runAgent(phrase: string, why: string) {
+  // Which plugin serves the approval overlay is configurable, because someone
+  // may run this alongside their own. But a STALE value is the likely case,
+  // not an exotic one: anyone upgrading from the old dada.desktop-agent has a
+  // settings.json pointing at a plugin that is being removed, and tier 4 would
+  // fail closed forever with a message about a target they have never heard
+  // of. So an unreachable configured target falls back to this plugin's own,
+  // loudly, rather than refusing.
+  const own = SHELL_IPC[SHELL_IPC.length - 1]
+  let target = await settingStr("agent.overlayTarget", own)
+  log(`agent: handing off (${why || "no reason given"})`)
+  if (!(await overlayReady(target)) && target !== own && (await overlayReady(own))) {
+    log(`agent: configured overlay "${target}" is not loaded — using "${own}"`)
+    target = own
+  }
+  if (!(await overlayReady(target))) {
+    log(`agent: refused, approval overlay not reachable at ${target}`)
+    await clearHud({ state: "error", mode: "command", transcript: phrase,
+                     errorText: "Approval overlay is not running" }, 3600)
+    return
+  }
+
+  const workspace = Number(await settingStr("agent.workspace", "10")) || 0
+  const label = why || "working on it"
+  const tick = () => hud({ state: "working", mode: "command",
+                           transcript: phrase, matched: label })
+  tick()
+
+  const out = await handOff(phrase, { workspace, onProgress: tick })
+  log(`agent: ${out.ok ? "done" : "failed"} — ${out.summary}`)
+  await clearHud({
+    state: out.ok ? "done" : "error",
+    mode: "command",
+    transcript: phrase,
+    matched: out.ok ? out.summary : "",
+    errorText: out.ok ? "" : out.summary,
+  }, 5000)
+}
+
 async function runCommand(phrase: string) {
   hud({ state: "transcribing", mode: "command", transcript: phrase })
   const intents = await loadIntents()
@@ -341,7 +392,8 @@ async function runCommand(phrase: string) {
   // than asking two overlapping questions in sequence.
   if (!match && assist !== "off") {
     hud({ state: "transcribing", mode: "command", transcript: phrase, matched: "thinking…" })
-    const r = await resolveRequest(phrase, intents, preference)
+    const r = await resolveRequest(phrase, intents, preference, assist.includes("agent"))
+    log(`resolve: kind=${r.result?.kind ?? "none"} provider=${r.provider ?? "-"}${r.refusal ? " refusal=" + r.refusal : ""}`)
     if (r.refusal) {
       await clearHud({ state: "error", mode: "command", transcript: phrase,
                        errorText: r.refusal }, 3600)
@@ -364,6 +416,9 @@ async function runCommand(phrase: string) {
           aiRouted = { provider: r.provider ?? "ai" }
         }
       }
+    } else if (r.result?.kind === "agent") {
+      await runAgent(phrase, r.result.explanation)
+      return
     } else if (r.result?.kind === "steps") {
       aiProposal = {
         steps: r.result.steps!, explanation: r.result.explanation,

@@ -32,7 +32,7 @@ Item {
 
   readonly property bool active: phase !== "idle"
   readonly property bool listening: phase === "listening"
-  readonly property bool working: phase === "transcribing"
+  readonly property bool working: phase === "transcribing" || phase === "working"
   readonly property bool failed: phase === "error"
   readonly property bool done: phase === "done"
   readonly property bool commanding: mode === "command"
@@ -51,7 +51,7 @@ Item {
 
   readonly property string statusWord: {
     if (failed) return "unrecognised"
-    if (working) return "processing"
+    if (working) return phase === "working" ? "agent" : "processing"
     if (done) return "executed"
     if (phase === "preview") return "confirm"
     return commanding ? "command" : "dictation"
@@ -60,7 +60,7 @@ Item {
   readonly property string caption: {
     if (failed) return errorText !== "" ? errorText : "Didn't catch that"
     if (listening) return commanding ? "listening for a command" : "listening"
-    if (working) return matchedIntent !== "" ? matchedIntent : "transcribing"
+    if (working) return matchedIntent !== "" ? matchedIntent : phase === "working" ? "working" : "transcribing"
     if (phase === "preview") return "enter to insert · esc to discard"
     if (done) return commanding && matchedIntent !== "" ? matchedIntent : "inserted"
     return ""

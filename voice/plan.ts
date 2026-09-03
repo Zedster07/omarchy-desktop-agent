@@ -182,7 +182,7 @@ If you cannot do it safely, reply {"steps": null, "reason": "<why>"}.`
 // The registry is still preferred where it fits: a registered command is one
 // somebody wrote down on purpose, and its argv has been seen before.
 export interface Resolution {
-  kind: "intent" | "steps"
+  kind: "intent" | "steps" | "agent"
   id?: string
   slots?: Record<string, string>
   steps?: string[][]
@@ -192,7 +192,7 @@ export interface Resolution {
 }
 
 export async function resolveRequest(
-  phrase: string, intents: Intent[], preference = "auto",
+  phrase: string, intents: Intent[], preference = "auto", allowAgent = false,
 ): Promise<{ result: Resolution | null; provider: string | null; refusal?: string }> {
   const provider = pickProvider(preference, "any")
   if (!provider) return { result: null, provider: null }
@@ -233,18 +233,28 @@ Rules:
 - To open an installed app use uwsm-app with its Desktop Entry ID. Do NOT use "omarchy launch <app>": that route exists for a fixed handful of names only.
 - A service with no app installed is still reachable on the web.
 - At most ${MAX_STEPS} steps.
+${allowAgent ? `- If the request genuinely CANNOT be done with commands -- it needs to read what
+  is on the screen, click one particular thing, or react to whatever happens
+  next -- reply {"kind":"agent","reason":"<why commands are not enough>"} and an
+  agent that can see and click will take it instead. This is the expensive path
+  and it is slow, so do not reach for it to avoid thinking: if commands can
+  finish the job, write the commands.` : ""}
 
 Examples:
 - "mute" -> {"kind":"intent","id":"audio.mute","slots":{}}
 - "go to the third workspace" -> {"kind":"intent","id":"workspace.switch","slots":{"n":"3"}}
 - "play <song> on youtube" -> {"kind":"steps","steps":[["mpv","--ytdl-format=bestaudio","ytdl://ytsearch1:<song>"]]}
 - "open youtube music and play something" -> {"kind":"steps","steps":[["xdg-open","https://music.youtube.com/"]]}
+${allowAgent ? `- "reply to the message that just came in" -> {"kind":"agent","reason":"needs to read what the message says"}
+- "close whichever window is covering the clock" -> {"kind":"agent","reason":"needs to see what is on screen"}` : ""}
 
 Reply with JSON only, no prose and no code fence:
 {"kind":"intent","id":"<id from the list>","slots":{}}
 or
 {"kind":"steps","steps":[["program","arg"]],"explanation":"<one short sentence the user reads before approving>","severity":"normal"}
-Use "severity":"destructive" if anything closes, deletes or interrupts something.
+${allowAgent ? `or
+{"kind":"agent","reason":"<why commands cannot do it>"}
+` : ""}Use "severity":"destructive" if anything closes, deletes or interrupts something.
 If you cannot do it safely, reply {"kind":"none","reason":"<why>"}.`
 
   const raw = await ask(provider, prompt)
@@ -262,6 +272,20 @@ If you cannot do it safely, reply {"kind":"none","reason":"<why>"}.`
     }
     return {
       result: { kind: "intent", id: json.id, slots, explanation: "", severity: "normal", provider: provider.id },
+      provider: provider.id,
+    }
+  }
+
+  // The agent tier is only reachable when the setting allows it. A model that
+  // asks for it anyway is treated as having no answer, rather than being
+  // quietly upgraded past the user's choice.
+  if (json.kind === "agent") {
+    if (!allowAgent) return { result: null, provider: provider.id }
+    return {
+      result: {
+        kind: "agent", explanation: String(json.reason ?? json.explanation ?? "").slice(0, 200),
+        severity: "normal", provider: provider.id,
+      },
       provider: provider.id,
     }
   }
