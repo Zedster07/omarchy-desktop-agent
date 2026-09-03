@@ -12,6 +12,9 @@
  * Re-entering a shell or an interpreter launders every rule below it: the
  * first token stops being the real program. Escalation is its own category.
  */
+/** Players that must only ever be handed something on this machine. */
+const PLAYERS = new Set(["mpv", "vlc", "mplayer", "ffplay", "cvlc", "mpv.sh"])
+
 const LAUNDERERS = new Set([
   "sh", "bash", "zsh", "fish", "dash", "ksh", "env", "xargs", "eval",
   "python", "python3", "perl", "ruby", "node", "bun", "deno", "lua", "awk",
@@ -50,6 +53,22 @@ export function checkProposedCommand(argv: string[]): Allowed | Refusal {
   }
 
   const prog = basename(argv[0])
+
+  // A media player is for files on this machine.
+  //
+  // Pointing mpv at the web is how "play despacito on youtube" became audio
+  // coming out of a process with no window, nothing to pause and nothing to
+  // find. Rejecting it here rather than asking for it in the prompt is the
+  // point: the prompt DID ask, in a worked example, and the example is what
+  // got followed. A rule the model cannot decline is a different kind of rule.
+  if (PLAYERS.has(prog)) {
+    const remote = argv.slice(1).find(a =>
+      /^(https?|ytdl|ytsearch\d*|rtmp|rtsp):/i.test(a) || /^ytdl:\/\//i.test(a))
+    if (remote) {
+      return { ok: false, token: remote,
+               reason: `${prog} is for local files — anything on the web opens in the browser, where it can be paused, skipped and closed` }
+    }
+  }
 
   if (LAUNDERERS.has(prog)) {
     return { ok: false, token: prog,

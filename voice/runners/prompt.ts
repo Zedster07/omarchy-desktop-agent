@@ -24,10 +24,11 @@ How to work here:
   clicks to do what one command does is slower and more fragile.
 - EXCEPT for anything the person is meant to watch, listen to, read or carry on
   using themselves. That opens in their browser, where they can pause it, skip
-  it, search from it and close it. A headless player started from a command
-  satisfies the sentence and not the request: it makes noise from nowhere, with
-  no window to find and nothing to press. Open the thing itself where you can
-  work out its address, and the search results for it when you cannot.
+  it, search from it and close it. Open the thing itself where you can work out
+  its address, and the search results for it when you cannot.
+- mpv, vlc and similar players are for files ON THIS MACHINE only. Handing one a
+  URL or a ytdl:// address is refused by the policy, and rightly: it plays with
+  no window, so there is nothing to pause and nothing to find.
 - Some actions will raise an approval prompt on their screen. That is expected.
   If one is denied, stop and report it rather than looking for another way
   around: a refusal is an answer.

@@ -229,7 +229,7 @@ ${installedApps().join(", ")}
 Rules:
 - Commands run as argv arrays. There is NO shell: no pipes, redirects, globs, $(...) or ;.
 - Never use sudo, a shell, a package manager, or anything that deletes, moves or overwrites files.
-- Anything the person is meant to WATCH or LISTEN to opens in their BROWSER, never in a background player. "mpv --ytdl-format=bestaudio" technically plays a song and is the wrong answer: it has no window, so there is nothing to pause, skip or even find, and the machine just starts making noise from nowhere.
+- mpv, vlc and other players are for files ON THIS MACHINE. Never hand one a URL, a ytdl:// address or a ytsearch query — that is rejected before it runs. Anything on the web opens in the BROWSER, where it can be paused, skipped, searched from and closed. A background player satisfies the sentence and not the request: no window, nothing to press, and noise coming from nowhere.
 - FINISH the request. Do not stop at a step that merely gets close to it. For media that means the browser is open ON the thing itself where possible — a watch URL rather than a homepage — and a search page only when nothing better can be built from the words you were given.
 - To open an installed app use uwsm-app with its Desktop Entry ID. Do NOT use "omarchy launch <app>": that route exists for a fixed handful of names only.
 - A service with no app installed is still reachable on the web.
