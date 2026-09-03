@@ -64,10 +64,7 @@ Item {
 
     Item {
       id: stage
-      anchors.horizontalCenter: parent.horizontalCenter
-      // Slightly above centre. Dead centre puts it on top of whatever you were
-      // looking at; a third of the way up leaves that visible underneath.
-      y: parent.height * 0.34
+      anchors.centerIn: parent
       width: Math.min(Style.space(720), parent.width - Style.gapsOut * 6)
       height: Math.max(input.implicitHeight, caret.implicitHeight) + Style.spacing.huge * 2
 
