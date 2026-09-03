@@ -290,13 +290,23 @@ Item {
     if ("levels" in p && Array.isArray(p.levels)) root.voiceLevels = p.levels
     voiceWatchdog.restart()
 
-    // While the text bar is open it is the surface showing progress, so the
-    // daemon's states are mirrored onto it instead of the floating HUD.
-    if (root.promptOpen) {
-      if (root.voiceState === "done") { root.promptPhase = "done"; root.promptResult = root.voiceMatched || root.voiceTranscript }
-      else if (root.voiceState === "error") { root.promptPhase = "error"; root.promptResult = root.voiceError }
-      else if (root.voiceState === "transcribing" || root.voiceState === "working") { root.promptPhase = "working"; root.promptResult = root.voiceMatched }
-      if (root.promptPhase === "done") promptCloseTimer.restart()
+    // Enter submits and the bar gets out of the way.
+    //
+    // It used to stay up as "the surface showing progress" -- written before
+    // the HUD had a corner readout, when the bar was the only thing that could
+    // report. Now it means a full-screen blurred modal sits over the desktop
+    // for the length of an agent run, which is minutes, and the only way out
+    // was Escape. Worse, it covers the very thing you asked the agent to work
+    // on.
+    //
+    // Closing on the daemon's FIRST reply rather than on submit keeps the
+    // failure visible: if nothing is listening, no reply arrives, the bar
+    // stays up and promptAck reports it. The daemon answers in milliseconds,
+    // so this is indistinguishable from closing on Enter when things work.
+    if (root.promptOpen && root.voiceState !== "idle") {
+      root.promptOpen = false
+      root.promptPhase = "idle"
+      root.promptResult = ""
     }
   }
 
@@ -396,14 +406,6 @@ Item {
   Timer { interval: 1000; repeat: true; running: root.yoloUntil > 0; onTriggered: root.yoloTick() }
   Timer { interval: 5000; repeat: true; running: true; onTriggered: { root.probe(); root.readYolo() } }
   Timer { id: recapTimer; interval: 25000; onTriggered: root.recap = null }
-
-  // A finished prompt closes itself, so the bar does not sit over the thing it
-  // just did. Failures stay up: you need to read those.
-  Timer {
-    id: promptCloseTimer
-    interval: 1400
-    onTriggered: if (root.promptPhase === "done") { root.promptOpen = false; root.promptPhase = "idle" }
-  }
 
   FileView {
     path: root.stateDir
