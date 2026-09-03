@@ -5,11 +5,36 @@
 // thing, or react to what happens next. That is what the MCP half of this
 // project already does, so this tier is a hand-off rather than new machinery.
 //
-// The safety comes from the policy engine, not from the agent runner:
+// The safety comes from the policy engine, and the agent must be unable to
+// step around it. That takes three flags, and the obvious one does not work:
 //
-//   --allowedTools mcp__desktop__*    the agent gets the desktop tools and
-//                                     NOTHING else -- no file edits, no shell,
-//                                     no network tools of its own.
+//   --allowedTools mcp__desktop__*    DOES NOT RESTRICT ANYTHING under
+//                                     bypassPermissions. It marks tools as
+//                                     pre-approved; it is not an allowlist.
+//                                     This was the original approach and it
+//                                     left the agent holding Bash, Read, Write,
+//                                     Edit, WebFetch, WebSearch, Agent, Cron*
+//                                     and every other MCP server on the
+//                                     machine. It could -- and did -- run
+//                                     hyprctl through Bash, so the desktop
+//                                     policy never saw the call. The policy was
+//                                     set to "enabled": false at the time and
+//                                     the task still ran.
+//
+//   --settings <deny list>            what actually removes the built-ins. Every
+//                                     tool that can read a file, write one, run
+//                                     a command, reach the network or spawn
+//                                     another agent is denied by name, so the
+//                                     only way to touch this machine is through
+//                                     a desktop_* tool -- which is exactly the
+//                                     surface the policy engine guards.
+//
+//   --strict-mcp-config --mcp-config  loads ONLY the desktop server. Without
+//                                     it the agent inherits whatever else the
+//                                     user has configured (figma, atlassian,
+//                                     gmail...), none of which the policy knows
+//                                     anything about.
+//
 //   --permission-mode bypassPermissions
 //                                     Claude Code must not stop to ask, because
 //                                     the person is talking, not watching a
@@ -18,8 +43,51 @@
 //                                     which fails closed when the plugin that
 //                                     serves it is not loaded.
 //
-// So "bypass" here means "do not add a SECOND prompt on top of the one the
-// policy already shows", not "skip the checks".
+// So "bypass" means "do not add a SECOND prompt on top of the one the policy
+// already shows". It does NOT mean the agent is unconstrained -- the deny list
+// and the strict MCP config are what make that true, and they are verified by
+// asking the agent to enumerate its own tools: `desktop-agent agent-check`.
+
+const HOME = process.env.HOME!
+const STATE = `${HOME}/.local/state/desktop-agent`
+
+// Denied by name. An allowlist would be safer in principle, but Claude Code
+// has no "only these" switch that survives bypassPermissions, so this has to
+// enumerate. Anything new that ships in a future release lands OUTSIDE this
+// list, which is the failure direction to keep in mind: re-run the doctor
+// check after upgrading Claude Code.
+const DENIED_TOOLS = [
+  "Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep",
+  "WebFetch", "WebSearch", "Agent", "Task", "Skill", "Workflow",
+  "CronCreate", "CronDelete", "CronList", "Monitor", "SendMessage",
+  "RemoteTrigger", "PushNotification", "DesignSync", "SendUserFile",
+  "EnterWorktree", "ExitWorktree", "ToolSearch", "TaskOutput", "TaskStop",
+  "ScheduleWakeup", "ListAgents", "ReportFindings", "Artifact",
+  "ListMcpResourcesTool", "ReadMcpResourceTool", "ReadMcpResourceDirTool",
+  "EndConversation", "AskUserQuestion", "ExitPlanMode", "EnterPlanMode",
+]
+
+/**
+ * Write the two config files the hand-off runs under, and return their paths.
+ * Generated rather than shipped because the MCP command line depends on where
+ * the plugin is installed and which bun is on PATH.
+ */
+function confine(): { settings: string; mcp: string } | null {
+  const bun = Bun.which("bun")
+  const server = new URL("../server/server.ts", import.meta.url).pathname
+  if (!bun) return null
+  const settings = `${STATE}/agent-settings.json`
+  const mcp = `${STATE}/agent-mcp.json`
+  try {
+    require("node:fs").mkdirSync(STATE, { recursive: true })
+    require("node:fs").writeFileSync(settings,
+      JSON.stringify({ permissions: { deny: DENIED_TOOLS } }, null, 2))
+    require("node:fs").writeFileSync(mcp, JSON.stringify({
+      mcpServers: { desktop: { type: "stdio", command: bun, args: ["run", server], env: {} } },
+    }, null, 2))
+  } catch { return null }
+  return { settings, mcp }
+}
 
 const SHELL_IPC = ["qs", "-p", "/usr/share/omarchy/shell", "ipc", "call"]
 
@@ -81,10 +149,17 @@ export async function handOff(
     return { ok: false, summary: "No agent CLI installed" }
   }
 
+  // No confinement, no hand-off. Running unconfined would hand a model Bash on
+  // the user's machine with no prompt, which is not a degraded mode of this
+  // feature -- it is a different and much worse feature.
+  const conf = confine()
+  if (!conf) return { ok: false, summary: "Could not confine the agent — refusing to run" }
+
   const proc = Bun.spawn([
     "claude", "-p", taskPrompt(phrase, workspace),
-    "--allowedTools", "mcp__desktop__*",
     "--permission-mode", "bypassPermissions",
+    "--strict-mcp-config", "--mcp-config", conf.mcp,
+    "--settings", conf.settings,
   ], { stdout: "pipe", stderr: "pipe", stdin: "ignore" })
 
   const killer = setTimeout(() => { try { proc.kill() } catch {} }, timeoutMs)

@@ -194,6 +194,35 @@ case "${1:-doctor}" in
     keybinds
     doctor
     ;;
+  agent-check)
+    # Does the tier-4 hand-off actually confine the agent?
+    #
+    # Worth a subcommand because the confinement is a DENYLIST -- Claude Code
+    # has no "only these tools" switch that survives bypassPermissions -- so
+    # any tool added in a future release starts out permitted. This asks the
+    # agent to enumerate its own surface and fails if anything outside the
+    # desktop server comes back. Re-run it after upgrading Claude Code.
+    settings="$HOME/.local/state/desktop-agent/agent-settings.json"
+    mcp="$HOME/.local/state/desktop-agent/agent-mcp.json"
+    if [[ ! -f "$settings" || ! -f "$mcp" ]]; then
+      bad "no agent config yet — run one voice/text request through tier 4 first"
+      exit 1
+    fi
+    bold "Asking the agent what tools it holds"
+    tools=$(timeout 150 claude -p "Reply with ONLY the comma-separated list of tool names you may use. No prose." \
+      --permission-mode bypassPermissions \
+      --strict-mcp-config --mcp-config "$mcp" --settings "$settings" < /dev/null 2>/dev/null | tail -1)
+    if [[ -z "$tools" ]]; then bad "no answer from the agent CLI"; exit 1; fi
+    leaked=$(echo "$tools" | tr ',' '\n' | sed 's/^ *//;s/ *$//' | grep -v '^mcp__desktop__' | grep -v '^$' || true)
+    if [[ -n "$leaked" ]]; then
+      bad "agent holds tools outside the desktop server:"
+      echo "$leaked" | sed 's/^/    /'
+      echo "    -> add these to DENIED_TOOLS in voice/agent.ts"
+      exit 1
+    fi
+    ok "confined: $(echo "$tools" | tr ',' '\n' | grep -c 'mcp__desktop__') desktop tools, nothing else"
+    ;;
+
   mcp-install)
     # Register the MCP server that ships WITH this plugin.
     #
