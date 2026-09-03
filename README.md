@@ -86,15 +86,24 @@ silence never reaches it.
 **Speak it.** Hold `F9` to dictate into whatever has focus, `F10` to give a
 command.
 
-**Type it.** `SUPER + SHIFT + SPACE` opens a prompt in the middle of the screen. Same
+**Type it.** `SUPER + F1` opens a prompt in the middle of the screen. Same
 tiers, same policy, same approval — the only difference is that it skipped the
 microphone. Useful when a name is hard to say, when the room is loud, or when
 you want to see the request before it runs.
 
-Every binding here is on a key whose physical position is the same on any
-layout — function keys, Escape, Space. Punctuation is not: `/` is Shift+: on
-AZERTY and elsewhere again on other layouts, so a plugin that binds it works
-only for the person who wrote it.
+`F9` dictate · `F10` command · `SUPER+F1` prompt · `SUPER+F2` cancel.
+
+Two rules behind those, both learned by getting them wrong:
+
+**Position, not character.** A layout moves punctuation and letters but never
+function keys. `/` is Shift+: on AZERTY and elsewhere again on other layouts,
+so binding it works only for whoever picked it.
+
+**Check `hyprctl binds`, not `omarchy menu keybindings --print`.** The latter
+lists only bindings that were given a description, so one registered without
+a description looks free and is not. `desktop-agent keybinds` now checks the
+real table and tells you about a collision — including the case where a key
+legitimately carries two bindings because one is press and one is release.
 
 ## Four tiers, escalating
 

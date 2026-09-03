@@ -129,14 +129,14 @@ Add to ~/.config/hypr/bindings.lua:
     o.bind("F9",  "Dictate (stop)",      "desktop-agent-listen stop",    { release = true })
     o.bind("F10", "Voice command",       "desktop-agent-listen start command")
     o.bind("F10", "Voice command (stop)","desktop-agent-listen stop",    { release = true })
-    o.bind("SUPER + ESCAPE", "Cancel voice", "desktop-agent-listen cancel")
+    o.bind("SUPER + F2", "Cancel voice", "desktop-agent-listen cancel")
 
     -- Type a request instead of speaking it. Same pipeline behind it.
     --
     -- SPACE, not a punctuation key: on a non-US layout "/" may need Shift and
     -- may not be in the same place at all. Space is the same physical key
     -- everywhere, and this sits beside the launcher on SUPER+SPACE.
-    o.bind("SUPER + SHIFT + SPACE", "Command prompt",
+    o.bind("SUPER + F1", "Command prompt",
            "omarchy-shell shell call io.github.zedster07.desktop-agent prompt")
 
 Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:
@@ -238,6 +238,49 @@ PY
         "$PLUGIN_DIR/systemd/desktop-agent-stt.service" > "$UNITS/desktop-agent-stt.service"
     systemctl --user daemon-reload
     ;;
-  keybinds) keybinds ;;
+  keybinds)
+    keybinds
+    echo "Checking those against what Hyprland actually has bound:"
+    python3 - <<'PY'
+import json, subprocess, sys
+try:
+    binds = json.loads(subprocess.run(["hyprctl", "binds", "-j"],
+                                      capture_output=True, text=True).stdout)
+except Exception:
+    print("  (hyprland not running — cannot check)"); sys.exit(0)
+
+def mods(m):
+    return "+".join(n for bit, n in [(64,"SUPER"),(8,"ALT"),(4,"CTRL"),(1,"SHIFT")] if m & bit)
+
+# A key legitimately carries two bindings when one is press and one is
+# release -- that is how push-to-talk works. Only two bindings with the SAME
+# release flag are a real collision.
+taken = {}
+for b in binds:
+    k = (b.get("key") or "").strip().upper()
+    if k:
+        taken.setdefault((mods(b["modmask"]), k), []).append(
+            (bool(b.get("release")), b.get("description") or ""))
+
+# `omarchy menu keybindings --print` lists only bindings that were given a
+# description, so a binding registered without one looks free and is not.
+# This reads Hyprland's own table instead.
+ours = {"Dictate", "Dictate (stop)", "Voice command", "Voice command (stop)",
+        "Cancel voice", "Command prompt"}
+for m, k in [("", "F9"), ("", "F10"), ("SUPER", "F1"), ("SUPER", "F2")]:
+    label = (m + " + " if m else "") + k
+    entries = taken.get((m, k), [])
+    foreign = [d for rel, d in entries if d not in ours]
+    presses = [d for rel, d in entries if not rel]
+    if not entries:
+        print(f"  free       {label}")
+    elif foreign:
+        print(f"  COLLISION  {label} — also bound to: {', '.join(foreign)}")
+    elif len(presses) > 1:
+        print(f"  COLLISION  {label} — {len(presses)} press bindings")
+    else:
+        print(f"  ours       {label}")
+PY
+    ;;
   *) echo "usage: desktop-agent [doctor|setup|mcp-install|keybinds]"; exit 2 ;;
 esac
