@@ -50,7 +50,7 @@ import path from "node:path"
 const policyPath = () =>
   process.env.DESKTOP_AGENT_POLICY || path.join(os.homedir(), ".config", "desktop-agent", "policy.jsonc")
 const AUDIT_PATH = path.join(os.homedir(), ".local", "share", "desktop-agent", "desktop.log")
-import { onWorkspace, isLaunch, confinementWorkspace } from "../voice/workspace.ts"
+import { onWorkspace, isLaunch, confinementWorkspace, inTerminal } from "../voice/workspace.ts"
 
 const TMP = path.join(os.tmpdir(), "desktop-agent")
 
@@ -76,6 +76,23 @@ const IDENTITY = process.env.DESKTOP_AGENT_IDENTITY?.trim() || "agent"
  * also applies to a plain Claude Code session using this MCP server. 0 is off.
  */
 const CONFINE_WS = confinementWorkspace()
+
+/**
+ * Run shell commands in a terminal the person can watch, instead of a pipe.
+ *
+ * On by default. An agent that changes your machine through invisible pipes
+ * gives you no way to see what it is doing while it does it -- only a summary
+ * afterwards, which you have to take on trust. A visible terminal is what a
+ * person doing the same job would leave behind.
+ */
+const VISIBLE_RUNS = (() => {
+  if (process.env.DESKTOP_AGENT_VISIBLE_RUNS === "false") return false
+  try {
+    const raw = require("node:fs").readFileSync(
+      `${process.env.HOME}/.config/desktop-agent/settings.json`, "utf8")
+    return JSON.parse(raw)?.agent?.visibleRuns !== false
+  } catch { return true }
+})()
 
 /** The bar panel's emergency stop: a file whose existence means "refuse". */
 const KILL_FLAG =
@@ -2239,36 +2256,70 @@ server.registerTool(
     // A command that opens a window gets placed on the agent's workspace too.
     // isLaunch() is what keeps this honest: "wpctl set-volume" and "hyprctl
     // dispatch close" are about where the person already is, and relocating
-    // those would be actively wrong. Wrapping also means stdout belongs to
-    // hyprctl rather than the program, which is fine for a launch and is
-    // exactly why it is not done for everything.
-    const runArgv = isLaunch([bin, ...argv])
-      ? onWorkspace([bin, ...argv], CONFINE_WS)
-      : [bin, ...argv]
-
-    const proc = Bun.spawn(runArgv, {
-      cwd,
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "pipe",
-      env: process.env,
-    })
-
-    // A hung command must not hold the tool call open forever.
-    let timedOut = false
-    const timer = setTimeout(() => {
-      timedOut = true
-      proc.kill(9)
-    }, Math.max(1000, policy.run.timeoutMs))
+    // those would be actively wrong.
+    const launches = isLaunch([bin, ...argv])
 
     let stdout = ""
     let stderr = ""
     let code = -1
-    try {
-      ;[stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
-      code = await proc.exited
-    } finally {
-      clearTimeout(timer)
+    let timedOut = false
+
+    // Run it where it can be SEEN.
+    //
+    // Everything used to go through a pipe: output captured, nothing on
+    // screen, a desktop that changed by itself with no visible cause. A person
+    // asked to do this would open a terminal and type in it, and watching that
+    // terminal is how you can tell what is happening while it happens rather
+    // than reading about it afterwards.
+    //
+    // A launch is excluded: it already opens its own window, and running
+    // `chromium` inside a terminal just leaves a dead shell next to it.
+    const visible = VISIBLE_RUNS && !launches && CONFINE_WS > 0
+    await fs.mkdir(TMP, { recursive: true })
+    const term = visible ? inTerminal([bin, ...argv], TMP, "Desktop Agent") : null
+
+    if (term) {
+      // The terminal process is not the command: the compositor may reparent
+      // it, and it lingers on purpose so the output stays readable. The exit
+      // code file is the completion marker, so that is what gets polled.
+      const { outFile, codeFile } = term
+      Bun.spawn(onWorkspace(term.argv, CONFINE_WS), {
+        cwd, stdin: "ignore", stdout: "ignore", stderr: "ignore", env: process.env,
+      }).unref()
+
+      const deadline = Date.now() + Math.max(1000, policy.run.timeoutMs)
+      while (Date.now() < deadline) {
+        try {
+          code = Number((await fs.readFile(codeFile, "utf8")).trim())
+          break
+        } catch { await sleep(200) }
+      }
+      if (!Number.isFinite(code) || code === -1) timedOut = true
+      try { stdout = await fs.readFile(outFile, "utf8") } catch {}
+      try { await fs.unlink(outFile) } catch {}
+      try { await fs.unlink(codeFile) } catch {}
+    } else {
+      const runArgv = launches ? onWorkspace([bin, ...argv], CONFINE_WS) : [bin, ...argv]
+      const proc = Bun.spawn(runArgv, {
+        cwd,
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        env: process.env,
+      })
+
+      // A hung command must not hold the tool call open forever.
+      const timer = setTimeout(() => {
+        timedOut = true
+        proc.kill(9)
+      }, Math.max(1000, policy.run.timeoutMs))
+
+      try {
+        ;[stdout, stderr] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text()])
+        code = await proc.exited
+      } finally {
+        clearTimeout(timer)
+      }
     }
 
     const cap = policy.run.maxOutputBytes

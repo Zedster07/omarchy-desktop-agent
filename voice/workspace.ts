@@ -12,13 +12,26 @@
 const DEFAULT_WORKSPACE = 10
 
 /** Quote one argv element for a shell command line. */
-function shq(a: string): string {
+export function shq(a: string): string {
   return /^[A-Za-z0-9_@%+=:,./-]+$/.test(a) ? a : `'${a.replace(/'/g, `'\\''`)}'`
 }
 
-/** Escape a string for embedding in a Lua double-quoted literal. */
+/**
+ * Escape a string for embedding in a Lua double-quoted literal.
+ *
+ * Newlines matter as much as quotes: Lua has no multi-line double-quoted
+ * string, so one raw \n inside makes the whole dispatch fail to parse and
+ * hyprctl answers "unfinished string near ..." with exit 7. Escaping only
+ * backslashes and quotes was enough for every command tried until one carried
+ * a newline, and then it failed with nothing on screen to explain why.
+ */
 function lua(s: string): string {
-  return `"${s.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`
+  return `"${s
+    .replace(/\\/g, "\\\\")
+    .replace(/"/g, '\\"')
+    .replace(/\n/g, "\\n")
+    .replace(/\r/g, "\\r")
+    .replace(/\t/g, "\\t")}"`
 }
 
 /**
@@ -67,6 +80,50 @@ export function confinementWorkspace(): number {
     const n = Number(JSON.parse(raw)?.agent?.workspace)
     return Number.isFinite(n) && n > 0 ? n : 0
   } catch { return 0 }
+}
+
+/**
+ * Wrap a command so it runs in a terminal the person can actually watch.
+ *
+ * The agent used to run everything through a pipe: output captured, nothing on
+ * screen, a desktop that changed by itself with no visible cause. Watching a
+ * terminal scroll is how you can tell what a thing is doing while it does it,
+ * and it is the difference between an assistant and a poltergeist.
+ *
+ * Output still has to come back to the agent, so the command redirects into a
+ * file and writes its exit code to a second file as a completion marker. The
+ * caller polls for that marker rather than waiting on the terminal process,
+ * which may outlive the command or be reparented by the compositor.
+ *
+ * Returns null when no terminal is available, so the caller can fall back to a
+ * plain pipe rather than failing.
+ */
+export function inTerminal(
+  argv: string[], dir: string, title: string, lingerSec = 3,
+): { argv: string[]; outFile: string; codeFile: string } | null {
+  const id = crypto.randomUUID().slice(0, 8)
+  const outFile = `${dir}/run-${id}.out`
+  const codeFile = `${dir}/run-${id}.code`
+  const inner = argv.map(shq).join(" ")
+  // The redirect and the marker are OUTSIDE the command, so a command that
+  // fails, writes to stderr or is killed still leaves both files behind.
+  const script =
+    // No OSC title escape: -T already sets the title, and a raw ESC/BEL
+    // byte has to survive shell quoting, a Lua literal and a hyprctl
+    // command line. It did not -- the window silently never appeared.
+    `echo ${shq("$ " + argv.join(" "))}; echo; ` +
+    `{ ${inner}; } > ${shq(outFile)} 2>&1; echo $? > ${shq(codeFile)}; ` +
+    `cat ${shq(outFile)}; ` +
+    `printf '\n[done — closing in %ss]\n' ${lingerSec}; sleep ${lingerSec}`
+
+  const term =
+    Bun.which("foot") ? ["foot", "-T", title, "sh", "-c", script]
+    : Bun.which("xdg-terminal-exec") ? ["xdg-terminal-exec", "--", "sh", "-c", script]
+    : Bun.which("wezterm") ? ["wezterm", "start", "--", "sh", "-c", script]
+    : Bun.which("alacritty") ? ["alacritty", "-T", title, "-e", "sh", "-c", script]
+    : Bun.which("kitty") ? ["kitty", "-T", title, "sh", "-c", script]
+    : null
+  return term ? { argv: term, outFile, codeFile } : null
 }
 
 export { DEFAULT_WORKSPACE }
