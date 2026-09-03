@@ -37,6 +37,16 @@ Item {
   readonly property bool done: phase === "done"
   readonly property bool commanding: mode === "command"
 
+  // Full screen is for the moment you are TALKING and nothing else.
+  //
+  // While you hold the key you are addressing the machine, so it can have the
+  // screen -- there is nothing else to look at. The moment it starts working
+  // that inverts: the whole point of watching an agent is watching it act on
+  // YOUR screen, and a scrim over the top hides the only thing worth seeing.
+  // So work, results and failures move to a corner readout that never covers
+  // anything and never takes a click.
+  readonly property bool immersive: listening || phase === "preview"
+
   readonly property color tone: failed ? Theme.danger
     : done ? Theme.ok
     : commanding ? Theme.caution
@@ -69,13 +79,38 @@ Item {
   PanelWindow {
     id: window
     visible: root.active
-    anchors { top: true; bottom: true; left: true; right: true }
+
+    // The SURFACE shrinks to the readout, it does not just stop painting.
+    //
+    // Removing the scrim was not enough: the compositor blur rule applies to
+    // whatever this surface covers, so a full-screen window with a transparent
+    // fill still blurred the entire desktop. The screen looked frosted with
+    // nothing drawn on it. Anchored to one corner while compact, the blur
+    // lands on the readout and the rest of the screen is untouched.
+    anchors {
+      top: root.immersive
+      left: root.immersive
+      bottom: true
+      right: true
+    }
+    margins {
+      bottom: root.immersive ? 0 : Style.gapsOut * 2
+      right: root.immersive ? 0 : Style.gapsOut * 2
+    }
+    implicitWidth: root.immersive ? 0 : pill.width
+    implicitHeight: root.immersive ? 0 : pill.height
     color: "transparent"
     WlrLayershell.namespace: "omarchy-desktop-agent-voice"
     WlrLayershell.layer: WlrLayer.Overlay
     WlrLayershell.keyboardFocus: root.phase === "preview"
       ? WlrKeyboardFocus.Exclusive : WlrKeyboardFocus.None
     exclusionMode: ExclusionMode.Ignore
+
+    // An empty input region while compact. Without this the surface still
+    // covers the screen and silently swallows every click, which is the same
+    // complaint as the scrim even once the scrim is invisible.
+    mask: root.immersive ? null : passThrough
+    Region { id: passThrough }
 
     // Full-screen backdrop.
     //
@@ -89,7 +124,7 @@ Item {
       // The theme's own dim, not black -- a light theme should not be shaded
       // with soot, and a theme that defines its own polkit scrim gets that.
       color: Theme.authScrim
-      opacity: root.active ? 0.85 : 0
+      opacity: root.immersive ? 0.85 : 0
       Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
     }
 
@@ -99,8 +134,9 @@ Item {
       width: Math.min(Style.space(640), parent.width - Style.gapsOut * 4)
       height: core.height + readout.implicitHeight + Style.spacing.huge
 
-      opacity: root.active ? 1 : 0
-      scale: root.active ? 1 : 0.94
+      visible: opacity > 0
+      opacity: root.immersive ? 1 : 0
+      scale: root.immersive ? 1 : 0.94
       Behavior on opacity { NumberAnimation { duration: Theme.fast; easing.type: Easing.OutCubic } }
       Behavior on scale { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutBack } }
 
@@ -191,6 +227,94 @@ Item {
           visible: !root.failed && root.caption !== "" && root.transcript !== ""
           text: root.caption
           tone: Color.foreground
+        }
+      }
+    }
+
+    // ---- the corner readout: everything that is not you talking.
+    //
+    // Bottom right, small, and out of the way. It says what is happening in
+    // one line and leaves the rest of the screen alone, because while the
+    // agent works the screen IS the interesting part.
+    Item {
+      id: pill
+      anchors.right: parent.right
+      anchors.bottom: parent.bottom
+      width: pillRow.implicitWidth + Style.spacing.huge * 2
+      height: pillRow.implicitHeight + Style.spacing.xl * 2
+
+      visible: opacity > 0
+      opacity: root.active && !root.immersive ? 1 : 0
+      // Slides up as it appears rather than popping, so something arriving in
+      // the corner of your eye reads as arriving and not as a glitch.
+      transform: Translate { y: pill.opacity > 0 ? 0 : Style.space(10) }
+      Behavior on opacity { NumberAnimation { duration: Theme.normal; easing.type: Easing.OutCubic } }
+
+      MultiEffect {
+        anchors.fill: plate
+        source: plate
+        shadowEnabled: true
+        shadowColor: Util.alpha(root.tone, root.working ? 0.34 : 0.2)
+        shadowBlur: 1.0
+        shadowVerticalOffset: Style.space(4)
+        Behavior on shadowColor { ColorAnimation { duration: Theme.normal } }
+      }
+
+      Rectangle {
+        id: plate
+        anchors.fill: parent
+        radius: Style.cornerRadius
+        color: Util.alpha(Theme.cardBackground, 0.9)
+        border.width: Style.spacing.hairline
+        border.color: Util.alpha(root.tone, root.working ? 0.5 : 0.28)
+        Behavior on border.color { ColorAnimation { duration: Theme.normal } }
+      }
+
+      HudScanlines { anchors.fill: parent; color: Theme.cardText; strength: 0.02 }
+
+      Row {
+        id: pillRow
+        anchors.centerIn: parent
+        spacing: Style.spacing.xl
+
+        // The same core, just small. It is the plugin's one recognisable
+        // shape, so shrinking it beats swapping in a different indicator --
+        // you already know what it means.
+        HudCore {
+          anchors.verticalCenter: parent.verticalCenter
+          width: Style.space(34)
+          height: width
+          tone: root.tone
+          levels: root.levels
+          live: false
+          working: root.working
+          glyph: root.glyph
+          fontFamily: Style.font.family
+        }
+
+        Column {
+          anchors.verticalCenter: parent.verticalCenter
+          spacing: Style.spacing.xxs
+
+          HudLabel {
+            text: root.statusWord
+            tone: root.tone
+            color: root.tone
+          }
+
+          // What it is actually doing, or what went wrong. One line: this is a
+          // glance, not a transcript.
+          Text {
+            visible: text !== ""
+            width: Math.min(implicitWidth, Style.space(420))
+            text: root.failed ? (root.errorText !== "" ? root.errorText : root.caption)
+              : root.matchedIntent !== "" ? root.matchedIntent
+              : root.transcript
+            color: root.failed ? Theme.danger : Util.alpha(Theme.cardText, 0.72)
+            font.family: Style.font.family
+            font.pixelSize: Style.font.caption
+            elide: Text.ElideRight
+          }
         }
       }
     }
