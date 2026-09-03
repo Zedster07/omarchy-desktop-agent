@@ -7,7 +7,7 @@
 
 import { settingStr } from "./settings.ts"
 import type { Intent } from "./intents.ts"
-import { appendFileSync, mkdirSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync} from "node:fs"
 import { onWorkspace, isLaunch, DEFAULT_WORKSPACE } from "./workspace.ts"
 
 const HOME = process.env.HOME!
@@ -131,11 +131,34 @@ if (plan.some(c => c.some(a => LEFTOVER.test(a)))) {
 // A deterministic match is a phrase someone registered on purpose and still
 // runs immediately. A model's opinion costs one keystroke.
 const destructive = intent.severity === "destructive"
-const confirm = await settingStr("commandConfirm", "destructive-only")
+// "command.confirm", not "commandConfirm". The panel writes the dotted key and
+// this read the flat one, so the setting had never once changed anything --
+// every value silently behaved as "destructive-only".
+const confirm = await settingStr("command.confirm", "destructive-only")
 const fromModel = aiProposed !== null || aiRouted !== null
-const needsApproval = fromModel
+
+/**
+ * Is the unattended lease running?
+ *
+ * Full access says "skip approvals for a while" on the panel and then asked
+ * anyway for anything a model wrote, which is most of what people actually
+ * say. A switch that does not do what its own description says is worse than
+ * not having it: you stop trusting the description.
+ *
+ * Destructive commands still stop, lease or not -- the panel promises that
+ * too, and it is the half worth keeping.
+ */
+function leaseActive(): boolean {
+  try {
+    const j = JSON.parse(readFileSync(`${HOME}/.local/state/desktop-agent/yolo.json`, "utf8"))
+    return Number(j.until) > Date.now()
+  } catch { return false }
+}
+
+const lease = leaseActive()
+const needsApproval = destructive
   || confirm === "always"
-  || (confirm === "destructive-only" && destructive)
+  || (fromModel && !lease)
 
 if (needsApproval) {
   const id = await ipc("request", JSON.stringify({
