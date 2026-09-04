@@ -59,6 +59,10 @@ DEFAULTS = {
         # workspace rather than through an invisible pipe. Needs a workspace
         # (see above) so the terminal has somewhere to go.
         "visibleRuns": True,
+        # How long one agent hand-off may run, in seconds. Long research jobs
+        # legitimately exceed the 5-minute default; the HUD says so when a run
+        # ends this way rather than calling it a failure.
+        "timeoutSec": 300,
         # Allow an agent CLI that cannot be limited to the desktop tools.
         #
         # Off, and it should stay off. The desktop policy only sees calls that

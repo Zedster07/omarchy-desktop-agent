@@ -72,7 +72,11 @@ export async function handOff(
   phrase: string,
   opts: { timeoutMs?: number; workspace?: number; onProgress?: (s: string) => void } = {},
 ): Promise<AgentOutcome> {
-  const timeoutMs = opts.timeoutMs ?? 300_000
+  // Configurable, because 5 minutes is a guess and some tasks are honestly
+  // longer than it. Reading five papers and building a graph is not a runaway
+  // agent, it is a big job -- and it hit this ceiling twice in a row.
+  const configured = Number(await settingStr("agent.timeoutSec", "300")) * 1000
+  const timeoutMs = opts.timeoutMs ?? (Number.isFinite(configured) && configured > 0 ? configured : 300_000)
   const workspace = opts.workspace ?? 10
 
   // agent.runner, NOT ai.provider.
@@ -164,7 +168,11 @@ export async function handOff(
 
   running = proc
   stopped = false
-  const killer = setTimeout(() => { try { proc.kill() } catch {} }, timeoutMs)
+  let timedOut = false
+  const killer = setTimeout(() => {
+    timedOut = true
+    try { proc.kill() } catch {}
+  }, timeoutMs)
   const ticker = setInterval(() => opts.onProgress?.("working"), 4000)
 
   try {
@@ -172,6 +180,17 @@ export async function handOff(
     const code = await proc.exited
     if (stopped) {
       return { ok: false, summary: "Stopped", report: out }
+    }
+    // A timeout is not a failure of the agent, and saying "Claude Code failed"
+    // sends someone hunting for a bug that is not there. Say what actually
+    // happened, and say how to allow longer.
+    if (timedOut) {
+      const mins = Math.round(timeoutMs / 60000)
+      return {
+        ok: false,
+        summary: `Ran out of time after ${mins} min — raise agent.timeoutSec for longer jobs`,
+        report: out,
+      }
     }
     if (code !== 0) {
       const err = (await new Response(proc.stderr).text()).trim()

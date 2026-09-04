@@ -905,7 +905,47 @@ const NEVER_YOLO: string[] = [
   "iptables", "ip6tables", "nft", "firewall-cmd", "ufw",
 ]
 
-const neverYolo = (base: string) => matchesAny(NEVER_YOLO, base)
+/**
+ * Tools that only WRITE when asked to, and otherwise just read.
+ *
+ * The list above matches on the program name, so `sed -i` -- which rewrites a
+ * file in place -- and `sed -n '480,515p'` -- which prints thirty-five lines --
+ * were treated as equally destructive. A research task that reads PDFs and
+ * slices text uses these constantly, so someone on full access got asked over
+ * and over for commands that could not change anything.
+ *
+ * The predicate answers "does THIS invocation write?", and defaults to yes.
+ * An unrecognised flag, a flag bundle that might hide -i, an argument that
+ * cannot be parsed: all of those fall through to destructive. Being wrong in
+ * the direction of asking costs a keystroke; being wrong the other way
+ * overwrites a file nobody approved.
+ */
+const CONDITIONAL: Record<string, (argv: string[]) => boolean> = {
+  // -i/--in-place is the only way sed touches a file.
+  sed: argv => argv.some(a => a === "--in-place" || /^--in-place=/.test(a) ||
+                              (/^-[a-zA-Z]*i/.test(a) && !a.startsWith("--"))),
+  // curl and wget write only when told where to put it.
+  curl: argv => argv.some(a => ["-o", "-O", "--output", "--remote-name",
+                                "--output-dir", "--create-dirs"].includes(a) ||
+                               /^--output=/.test(a) || /^-[a-zA-Z]*[oO]/.test(a)),
+  wget: argv => argv.some(a => !a.startsWith("-") ? false
+                             : ["-O", "--output-document", "-P", "--directory-prefix"].includes(a) ||
+                               /^--output-document=/.test(a)),
+}
+
+/**
+ * Is this command one the lease must never promote?
+ *
+ * `argv` is the whole invocation, not just the program, so a tool that can go
+ * either way is judged by what it was actually asked to do.
+ */
+const neverYolo = (base: string, argv: string[] = []) => {
+  const conditional = CONDITIONAL[base]
+  if (conditional) {
+    try { return conditional(argv) } catch { return true }
+  }
+  return matchesAny(NEVER_YOLO, base)
+}
 
 type Yolo = { active: boolean; until: number; remainingMs: number; why?: string }
 const YOLO_OFF: Yolo = { active: false, until: 0, remainingMs: 0 }
@@ -2294,7 +2334,7 @@ server.registerTool(
       d,
       error,
       `cmd:${base}`,
-      neverYolo(base) ? `"${base}" is destructive and is never auto-approved` : undefined,
+      neverYolo(base, argv) ? `"${base}" is destructive and is never auto-approved` : undefined,
     )
 
     const bin = path.isAbsolute(cmd) ? cmd : Bun.which(cmd)
