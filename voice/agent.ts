@@ -13,6 +13,7 @@
 // which fails closed when the plugin that serves it is not loaded.
 
 import { settingStr } from "./settings.ts"
+import { resetBeat, sinceBeat } from "./heartbeat.ts"
 import { getRunner, listAvailableRunners, unconfinedRunners, taskPrompt } from "./runners/index.ts"
 
 export { taskPrompt }
@@ -72,11 +73,26 @@ export async function handOff(
   phrase: string,
   opts: { timeoutMs?: number; workspace?: number; onProgress?: (s: string) => void } = {},
 ): Promise<AgentOutcome> {
-  // Configurable, because 5 minutes is a guess and some tasks are honestly
-  // longer than it. Reading five papers and building a graph is not a runaway
-  // agent, it is a big job -- and it hit this ceiling twice in a row.
-  const configured = Number(await settingStr("agent.timeoutSec", "300")) * 1000
-  const timeoutMs = opts.timeoutMs ?? (Number.isFinite(configured) && configured > 0 ? configured : 300_000)
+  // Two limits, measuring different things.
+  //
+  // idleMs asks "has anything happened lately?" and is the one that normally
+  // fires. It replaced a total-time ceiling that killed a run after thirty
+  // successful tool calls for being slow, while a genuinely stuck agent got
+  // exactly the same five minutes. Elapsed time was never the question.
+  //
+  // maxMs is the backstop for the case idle cannot see: an agent looping
+  // productively forever, beating the whole way. Hours, not minutes -- it
+  // exists so nothing runs unattended indefinitely, not to bound real work.
+  const num = async (key: string, dflt: number) => {
+    const v = Number(await settingStr(key, String(dflt)))
+    return Number.isFinite(v) && v > 0 ? v * 1000 : dflt * 1000
+  }
+  // 120s swallows a slow model turn rather than trying to catch one. Thinking
+  // happens inside the agent CLI as a network wait: no tool call, no CPU, and
+  // nothing observable from here. Killing a thinking agent is worse than
+  // waiting another minute for a stuck one.
+  const idleMs = await num("agent.idleSec", 120)
+  const maxMs = opts.timeoutMs ?? (await num("agent.maxRunSec", 3600))
   const workspace = opts.workspace ?? 10
 
   // agent.runner, NOT ai.provider.
@@ -168,11 +184,16 @@ export async function handOff(
 
   running = proc
   stopped = false
-  let timedOut = false
-  const killer = setTimeout(() => {
-    timedOut = true
+  resetBeat()
+
+  const startedAt = Date.now()
+  let killedBy: "idle" | "max" | null = null
+  const killer = setInterval(() => {
+    if (Date.now() - startedAt > maxMs) killedBy = "max"
+    else if (sinceBeat() > idleMs) killedBy = "idle"
+    else return
     try { proc.kill() } catch {}
-  }, timeoutMs)
+  }, 5000)
   const ticker = setInterval(() => opts.onProgress?.("working"), 4000)
 
   try {
@@ -181,14 +202,20 @@ export async function handOff(
     if (stopped) {
       return { ok: false, summary: "Stopped", report: out }
     }
-    // A timeout is not a failure of the agent, and saying "Claude Code failed"
-    // sends someone hunting for a bug that is not there. Say what actually
-    // happened, and say how to allow longer.
-    if (timedOut) {
-      const mins = Math.round(timeoutMs / 60000)
+    // Neither limit is a failure of the agent, and "Claude Code failed" sends
+    // someone hunting for a bug that is not there. Say which limit stopped it
+    // and name the setting that governs it.
+    if (killedBy === "idle") {
       return {
         ok: false,
-        summary: `Ran out of time after ${mins} min — raise agent.timeoutSec for longer jobs`,
+        summary: `Stopped: nothing happened for ${Math.round(idleMs / 1000)}s — raise agent.idleSec if it was still thinking`,
+        report: out,
+      }
+    }
+    if (killedBy === "max") {
+      return {
+        ok: false,
+        summary: `Stopped after ${Math.round(maxMs / 60000)} min at the hard limit — raise agent.maxRunSec`,
         report: out,
       }
     }
@@ -208,7 +235,7 @@ export async function handOff(
     return { ok: true, summary: summary.slice(0, 200) || "Done", report: out }
   } finally {
     running = null
-    clearTimeout(killer)
+    clearInterval(killer)
     clearInterval(ticker)
     if (prepared.cleanup) {
       try { await prepared.cleanup() } catch {}

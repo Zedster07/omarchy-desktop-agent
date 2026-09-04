@@ -59,10 +59,15 @@ DEFAULTS = {
         # workspace rather than through an invisible pipe. Needs a workspace
         # (see above) so the terminal has somewhere to go.
         "visibleRuns": True,
-        # How long one agent hand-off may run, in seconds. Long research jobs
-        # legitimately exceed the 5-minute default; the HUD says so when a run
-        # ends this way rather than calling it a failure.
-        "timeoutSec": 300,
+        # Stop a hand-off after this many seconds with NOTHING happening --
+        # no tool call started, none in flight. Not elapsed time: a download or
+        # a page load holds the clock open for as long as it takes. Sized to
+        # swallow a slow model turn rather than catch one.
+        "idleSec": 120,
+        # Backstop for the case idle cannot see: an agent looping productively
+        # forever. Hours, not minutes -- it is there so nothing runs unattended
+        # indefinitely, not to bound real work.
+        "maxRunSec": 3600,
         # Allow an agent CLI that cannot be limited to the desktop tools.
         #
         # Off, and it should stay off. The desktop policy only sees calls that

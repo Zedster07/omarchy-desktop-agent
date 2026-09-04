@@ -51,6 +51,7 @@ const policyPath = () =>
   process.env.DESKTOP_AGENT_POLICY || path.join(os.homedir(), ".config", "desktop-agent", "policy.jsonc")
 const AUDIT_PATH = path.join(os.homedir(), ".local", "share", "desktop-agent", "desktop.log")
 import { onWorkspace, isLaunch, confinementWorkspace, ensureAgentTerminal, sendToAgentTerminal, abortAgentTerminal } from "../voice/workspace.ts"
+import { beat } from "../voice/heartbeat.ts"
 
 // Per-user scratch. /tmp/desktop-agent is created by whoever gets there first
 // and owned by them, so on a shared machine the second user hits EACCES on a
@@ -1470,6 +1471,12 @@ function guard(tool: string, fn: (args: any) => Promise<ToolResult>) {
     const store = { tool, seq, approvals: [] as string[] }
     let failed: "refused" | "failed" | null = null
     pulse(activityLabel(tool, args))
+
+    // Held open for as long as the call takes. A download, a page load or a
+    // compile is silent in the audit log and busy on the machine, so beating
+    // only at the edges would read the slowest work as the most idle.
+    beat()
+    const heart = setInterval(beat, 5000)
     try {
       return await callCtx.run(store, () => fn(args))
     } catch (e) {
@@ -1478,6 +1485,8 @@ function guard(tool: string, fn: (args: any) => Promise<ToolResult>) {
       failed = e instanceof Refused ? "refused" : "failed"
       return { content: [{ type: "text", text: msg }], isError: true }
     } finally {
+      clearInterval(heart)
+      beat()
       // desktop_policy is the agent reading the rules, not touching anything.
       if (tool !== "desktop_policy") {
         // seq*10 keeps an approval immediately above the action it unblocked.
