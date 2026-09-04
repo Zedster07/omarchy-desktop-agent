@@ -106,6 +106,30 @@ const CONFINE_WS = confinementWorkspace()
  * about is a rule it can reason its way around when a task seems to need it;
  * this one it simply cannot reach.
  */
+/**
+ * Drop marker files nothing is waiting for any more.
+ *
+ * The happy path unlinks them after reading. The unhappy ones do not: a
+ * command that outlives its deadline, a server killed mid-call, a test that
+ * polls the files and walks away. Each leak is two tiny files, which is
+ * exactly the size of leak that never gets noticed and never stops.
+ *
+ * An hour is far longer than any tool call may run, so anything older is
+ * certainly abandoned rather than in flight.
+ */
+function sweepMarkers(): void {
+  try {
+    const cutoff = Date.now() - 60 * 60 * 1000
+    for (const name of require("node:fs").readdirSync(TMP)) {
+      if (!/^run-[0-9a-f]+\.(out|code)$/.test(name)) continue
+      const full = path.join(TMP, name)
+      try {
+        if (require("node:fs").statSync(full).mtimeMs < cutoff) require("node:fs").unlinkSync(full)
+      } catch {}
+    }
+  } catch {}
+}
+
 const ROLE = process.env.DESKTOP_AGENT_ROLE?.trim() || "master"
 const IS_SUBAGENT = ROLE !== "master"
 
@@ -2792,6 +2816,7 @@ async function sweepStaleCaptures() {
 }
 
 await sweepStaleCaptures()
+sweepMarkers()
 
 await server.connect(new StdioServerTransport())
 note(`ready — identity "${IDENTITY}", policy ${policyPath()}`)

@@ -23,9 +23,10 @@ import { loadIntents } from "./registry.ts"
 import { resolveRequest } from "./plan.ts"
 import { handOff, overlayReady, stopAgent } from "./agent.ts"
 import { remember, asContext } from "./history.ts"
+import { closeSubagentWindows } from "./workspace.ts"
 import { setting, settingStr } from "./settings.ts"
 import { resolveTarget, listApps } from "./apps.ts"
-import { existsSync, mkdirSync, readFileSync, appendFileSync } from "node:fs"
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, appendFileSync } from "node:fs"
 import { unlink } from "node:fs/promises"
 
 const HOME = process.env.HOME!
@@ -344,6 +345,9 @@ async function runAgent(phrase: string, why: string) {
   tick()
 
   const out = await handOff(phrase, { workspace, onProgress: tick })
+  // Whatever the outcome. A failed or stopped run leaves subagent windows and
+  // scratch directories behind exactly like a successful one does.
+  closeSubagentWindows(`${process.env.XDG_RUNTIME_DIR || "/tmp"}/desktop-agent`)
   log(`agent: ${out.ok ? "done" : "failed"} — ${out.summary}`)
   remember(phrase, out.ok ? out.summary : `failed: ${out.summary}`, "agent")
 
@@ -365,6 +369,16 @@ async function runAgent(phrase: string, why: string) {
     try {
       mkdirSync(dir, { recursive: true })
       await Bun.write(file, `> ${phrase}\n\n${out.report.trim()}\n`)
+      // Keep the last fifty. These are the record of what the agent did, so
+      // they should outlive the session by a long way -- but "forever" is not
+      // a retention policy, it is the absence of one, and nothing else on this
+      // machine is going to clean them up.
+      try {
+        const kept = readdirSync(dir).filter(f => f.endsWith(".md")).sort()
+        for (const old of kept.slice(0, Math.max(0, kept.length - 50))) {
+          try { unlinkSync(`${dir}/${old}`) } catch {}
+        }
+      } catch {}
       await Bun.write(`${STATE}/last-run.md`, `> ${phrase}\n\n${out.report.trim()}\n`)
       const viewer = Bun.which("omawrite")
       if (viewer && (await settingStr("agent.openReport", "true")) !== "false") {

@@ -258,6 +258,30 @@ export function sendToAgentTerminal(
 }
 
 /**
+ * Close the windows delegated subagents were typing into.
+ *
+ * Called when a run ends, so windows do not pile up across runs. The master's
+ * own window is left alone -- it holds the session, and killing it would take
+ * the session with it.
+ *
+ * Each subagent's scratch directory goes too. Nothing waits on those markers
+ * once the subagent that owned them has exited, and a per-subagent directory
+ * that is never removed is a slow leak with a tidy name.
+ */
+export function closeSubagentWindows(dir: string): void {
+  if (!Bun.which("tmux")) return
+  try {
+    const listed = Bun.spawnSync(["tmux", "list-windows", "-t", SESSION, "-F", "#{window_name}"])
+    const names = new TextDecoder().decode(listed.stdout).split("\n").filter(n => /^sub-/.test(n))
+    for (const n of names) {
+      Bun.spawnSync(["tmux", "kill-window", "-t", `${SESSION}:${n}`])
+      try { require("node:fs").rmSync(`${dir}/${n}`, { recursive: true, force: true }) } catch {}
+    }
+  } catch {}
+}
+
+
+/**
  * Interrupt whatever is running in the agent's terminal.
  *
  * A timeout on the pipe path kills the process. On this path there was no
