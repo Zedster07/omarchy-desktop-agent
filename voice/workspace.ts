@@ -162,16 +162,28 @@ export function agentTerminalUp(): boolean {
 export async function ensureAgentTerminal(ws: number, dir: string): Promise<boolean> {
   if (!Bun.which("tmux")) return false
   if (!agentTerminalUp()) {
-    // No id argument in the visible command. Tool calls are serialised by the
-    // server, so one pair of "last" files is unambiguous, and the pane gets to
-    // read `da uname -r` instead of `da 3c6b38a7 uname -r`. The wrapper itself
-    // stays visible on purpose -- it is really there, and hiding it would make
-    // the pane a nicer lie.
+    // The id is back, and it is not decoration.
+    //
+    // One shared pair of "last" files was fine while tool calls were
+    // serialised, which they were. The moment two calls can be in flight --
+    // parallel subagents being the obvious way -- it becomes a static buffer
+    // inside a shared function: two callers write the same two paths, and each
+    // reads whichever landed last. Not a crash. Subagent A is handed B's
+    // output and B's exit code, both report success, and the answer is
+    // confidently wrong.
+    //
+    // Task independence cannot prevent that. Two agents extracting different
+    // PDFs are perfectly independent as TASKS and still collide here, because
+    // the collision is a resource one level below what any planner can see.
+    //
+    // The cost is a visible id in the pane -- `da 3c6b38a7 pdftotext ...`
+    // rather than `da pdftotext ...`. Worth it: a readable line is not worth a
+    // silent wrong answer.
     const helper =
-      `da() { ` +
-      `"$@" > ${dir}/last.out 2>&1; rc=$?; ` +
-      `cat ${dir}/last.out; ` +
-      `echo $rc > ${dir}/last.code; ` +
+      `da() { local id=$1; shift; ` +
+      `"$@" > ${dir}/run-$id.out 2>&1; rc=$?; ` +
+      `cat ${dir}/run-$id.out; ` +
+      `echo $rc > ${dir}/run-$id.code; ` +
       `return $rc; }`
     const boot = `tmux new-session -d -s ${SESSION} && tmux send-keys -t ${SESSION} ${shq(helper)} Enter && tmux send-keys -t ${SESSION} clear Enter`
     Bun.spawnSync(["sh", "-c", boot])
@@ -205,17 +217,19 @@ export async function ensureAgentTerminal(ws: number, dir: string): Promise<bool
 export function sendToAgentTerminal(
   argv: string[], dir: string, cwd?: string,
 ): { outFile: string; codeFile: string } {
-  const outFile = `${dir}/last.out`
-  const codeFile = `${dir}/last.code`
-  try { require("node:fs").unlinkSync(codeFile) } catch {}
-  try { require("node:fs").unlinkSync(outFile) } catch {}
+  // Per call, so concurrent calls cannot read each other's results. Nothing to
+  // delete first either: a fresh id has no stale marker to be mistaken for
+  // this call finishing instantly.
+  const id = crypto.randomUUID().slice(0, 8)
+  const outFile = `${dir}/run-${id}.out`
+  const codeFile = `${dir}/run-${id}.code`
   // cd first. desktop_run resolves and validates a cwd -- from the caller, the
   // policy, or the home directory -- and the pipe path honours it. Typing into
   // a session ignored it entirely, so "git status" ran wherever the session
   // happened to have been created. A visible terminal that lies about where it
   // is is worse than no terminal.
   const cd = cwd ? `cd ${shq(cwd)} && ` : ""
-  Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, `${cd}da ${argv.map(shq).join(" ")}`, "Enter"])
+  Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, `${cd}da ${id} ${argv.map(shq).join(" ")}`, "Enter"])
   return { outFile, codeFile }
 }
 
