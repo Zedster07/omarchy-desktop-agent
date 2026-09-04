@@ -1376,11 +1376,60 @@ const say = (text: string, extra: Content[] = []): ToolResult => ({
  * than a protocol error, so the model actually reads the explanation instead
  * of seeing a bare "tool failed".
  */
+
+/**
+ * Say what is happening, right now, on the HUD.
+ *
+ * A tier-4 run showed one line -- the planner's reason for handing off, fixed
+ * at the start -- for its whole duration. Two minutes of "needs to load
+ * animhq.com" while the agent had long since given up on the browser and moved
+ * to curl. It reads as frozen, and twice someone had to ask whether it was
+ * working or stuck. The agent knows exactly what it is doing at every step;
+ * nothing was carrying that the four inches to the screen.
+ *
+ * Fire-and-forget on purpose. This is a readout, not a protocol: if the shell
+ * is slow, missing, or the plugin is not loaded, the tool call must not wait or
+ * fail for the sake of a label.
+ */
+function pulse(label: string): void {
+  if (!label) return
+  try {
+    Bun.spawn(["qs", "-p", QS_SHELL, "ipc", "call", QS_TARGET, "activity", label.slice(0, 90)],
+              { stdout: "ignore", stderr: "ignore", stdin: "ignore" }).unref()
+  } catch {}
+}
+
+/** One short phrase for what a tool call is about to do. */
+function activityLabel(tool: string, a: any): string {
+  const first = (v: unknown) => String(v ?? "").split("\n")[0].slice(0, 48)
+  switch (tool) {
+    case "desktop_screenshot":    return "looking at the screen"
+    case "desktop_windows":       return "checking what is open"
+    case "desktop_policy":        return "checking what it is allowed to do"
+    case "desktop_run":           return `running ${first(a?.command)}`
+    case "desktop_launch":        return `opening ${first(a?.app)}`
+    case "desktop_workspace":     return `switching to workspace ${first(a?.workspace)}`
+    case "desktop_window":        return `${first(a?.verb) || "changing"} a window`
+    case "desktop_type":          return "typing"
+    case "desktop_key":           return `pressing ${first(a?.keys) || "a key"}`
+    case "desktop_mouse":         return "moving the mouse"
+    case "desktop_write":         return `writing ${first(a?.path)}`
+    case "desktop_edit":          return `editing ${first(a?.path)}`
+    case "desktop_browser_open":  return `opening ${first(a?.url) || "the browser"}`
+    case "desktop_browser_read":  return "reading the page"
+    case "desktop_browser_click": return "clicking on the page"
+    case "desktop_browser_type":  return "typing into the page"
+    case "desktop_browser_close": return "closing the browser"
+    default:                      return tool.replace(/^desktop_/, "").replace(/_/g, " ")
+  }
+}
+
 function guard(tool: string, fn: (args: any) => Promise<ToolResult>) {
   return async (args: any): Promise<ToolResult> => {
     const seq = ++callSeq
     const store = { tool, seq, approvals: [] as string[] }
     let failed: "refused" | "failed" | null = null
+    pulse(activityLabel(tool, args))
     try {
       return await callCtx.run(store, () => fn(args))
     } catch (e) {

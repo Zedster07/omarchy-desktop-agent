@@ -116,6 +116,12 @@ Item {
   property string voiceError: ""
   property string voiceMatched: ""
   property var voiceLevels: []
+
+  // What the agent is doing RIGHT NOW, pushed by the MCP server on each tool
+  // call. Separate from voiceMatched, which is the planner's reason for the
+  // hand-off and is fixed for the whole run -- keeping them apart means a
+  // stale reason can never masquerade as live progress.
+  property string agentActivity: ""
   property real voiceElapsed: 0
   property bool voiceAvailable: false
 
@@ -288,6 +294,9 @@ Item {
     if ("matched" in p) root.voiceMatched = String(p.matched)
     if ("elapsed" in p) root.voiceElapsed = Number(p.elapsed) || 0
     if ("levels" in p && Array.isArray(p.levels)) root.voiceLevels = p.levels
+    // A run that has ended has no current action. Left alone, the last thing
+    // the agent did would sit under "done" as though it were still happening.
+    if (root.voiceState !== "working") root.agentActivity = ""
     voiceWatchdog.restart()
 
     // Enter submits and the bar gets out of the way.
@@ -443,7 +452,10 @@ Item {
         // pixels -- which is how the last two "it did not close" readings
         // were wrong in both directions.
         prompt: root.promptOpen,
-        promptPhase: root.promptPhase
+        promptPhase: root.promptPhase,
+        // The live action line, so its behaviour can be observed rather than
+        // read off a screenshot.
+        activity: root.agentActivity
       })
     }
 
@@ -461,6 +473,18 @@ Item {
 
     // Pushed by the voice daemon on every state change.
     function voice(payload: string): void { root.applyVoice(payload) }
+
+    /**
+     * Pushed by the MCP server before each tool call, so the HUD can say what
+     * is happening instead of repeating why the run started.
+     *
+     * Ignored unless a run is actually in flight: the same server answers a
+     * plain Claude Code session, and those calls have no business writing to
+     * this plugin's HUD.
+     */
+    function activity(text: string): void {
+      if (root.voiceState === "working") root.agentActivity = String(text).slice(0, 90)
+    }
 
     /** Close the text prompt from outside — the cancel gesture routes here. */
     function promptClose(): void {
@@ -504,6 +528,7 @@ Item {
     transcript: root.voiceTranscript
     errorText: root.voiceError
     matchedIntent: root.voiceMatched
+    activity: root.agentActivity
     levels: root.voiceLevels
     elapsed: root.voiceElapsed
     onCommit: root.voiceSend("commit")

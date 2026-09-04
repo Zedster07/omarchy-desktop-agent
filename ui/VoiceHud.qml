@@ -35,6 +35,9 @@ Item {
   readonly property bool working: phase === "transcribing" || phase === "working"
   readonly property bool failed: phase === "error"
   readonly property bool done: phase === "done"
+  /** What the agent is doing this second, if anything is telling us. */
+  property string activity: ""
+
   readonly property bool commanding: mode === "command"
 
   // Full screen is for the moment you are TALKING and nothing else.
@@ -314,7 +317,11 @@ Item {
           Text {
             visible: text !== ""
             width: Math.min(implicitWidth, Style.space(420))
+            // Live action first. matchedIntent is the reason the run STARTED
+            // and never changes, so once the agent is actually doing things it
+            // is the least current thing available.
             text: root.failed ? (root.errorText !== "" ? root.errorText : root.caption)
+              : root.activity !== "" ? root.activity
               : root.matchedIntent !== "" ? root.matchedIntent
               : root.transcript
             color: root.failed ? Theme.danger : Util.alpha(Theme.cardText, 0.72)
