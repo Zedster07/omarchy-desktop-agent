@@ -202,13 +202,47 @@ export async function ensureAgentTerminal(ws: number, dir: string): Promise<bool
  * appear, so leaving the previous one in place would make every command look
  * like it finished instantly with the last command's result.
  */
-export function sendToAgentTerminal(argv: string[], dir: string): { outFile: string; codeFile: string } {
+export function sendToAgentTerminal(
+  argv: string[], dir: string, cwd?: string,
+): { outFile: string; codeFile: string } {
   const outFile = `${dir}/last.out`
   const codeFile = `${dir}/last.code`
   try { require("node:fs").unlinkSync(codeFile) } catch {}
   try { require("node:fs").unlinkSync(outFile) } catch {}
-  Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, `da ${argv.map(shq).join(" ")}`, "Enter"])
+  // cd first. desktop_run resolves and validates a cwd -- from the caller, the
+  // policy, or the home directory -- and the pipe path honours it. Typing into
+  // a session ignored it entirely, so "git status" ran wherever the session
+  // happened to have been created. A visible terminal that lies about where it
+  // is is worse than no terminal.
+  const cd = cwd ? `cd ${shq(cwd)} && ` : ""
+  Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, `${cd}da ${argv.map(shq).join(" ")}`, "Enter"])
   return { outFile, codeFile }
+}
+
+/**
+ * Interrupt whatever is running in the agent's terminal.
+ *
+ * A timeout on the pipe path kills the process. On this path there was no
+ * process to kill and nothing was sent, so a command that hung or stopped for
+ * input just sat there -- and the NEXT send-keys typed its command into that
+ * program's stdin instead of a shell. One `sudo` prompt would brick the session
+ * for the rest of its life, silently, with every later command being eaten as
+ * a password guess.
+ */
+export function abortAgentTerminal(): void {
+  if (!Bun.which("tmux")) return
+  try {
+    // C-c to interrupt, then C-u to clear the line.
+    //
+    // NOT a literal "q" for pagers, which was the first attempt: at a normal
+    // prompt q is not a keystroke a program eats, it is a character left on
+    // the command line, so the next command arrived as "qda echo ..." and
+    // never ran. The abort became the thing that bricked the session it was
+    // written to rescue. C-u is safe in both states -- it clears a partial
+    // line and does nothing at an empty one.
+    Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, "C-c"])
+    Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, "C-u"])
+  } catch {}
 }
 
 export { DEFAULT_WORKSPACE }

@@ -17,7 +17,7 @@
 // writing at once -- the daemon records tier 4, and voice/execute.ts runs in
 // its own process for tiers 1-3.
 
-import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
+import { appendFileSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from "node:fs"
 
 const HOME = process.env.HOME!
 const DIR = `${HOME}/.local/state/desktop-agent`
@@ -70,7 +70,18 @@ function readAll(): Turn[] {
 function prune(): void {
   const all = readAll()
   if (all.length <= KEEP) return
-  try { writeFileSync(PATH, all.slice(-KEEP).map(t => JSON.stringify(t)).join("\n") + "\n") } catch {}
+  // Write-then-rename, because two processes append here: the daemon records
+  // tier 4, and each execute.ts child records tiers 1-3. A read-modify-write
+  // in place can drop a turn written between the read and the write, or leave
+  // a half-line that never parses again. rename() is atomic, so a reader sees
+  // either the old file or the new one.
+  const tmp = `${PATH}.tmp.${process.pid}`
+  try {
+    writeFileSync(tmp, all.slice(-KEEP).map(t => JSON.stringify(t)).join("\n") + "\n")
+    renameSync(tmp, PATH)
+  } catch {
+    try { unlinkSync(tmp) } catch {}
+  }
 }
 
 /** The turns worth showing a model right now. */

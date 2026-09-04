@@ -90,6 +90,15 @@ doctor() {
 
   echo; bold "Agent CLIs (optional — voice works without this)"
   if have bun; then ok "bun ($(command -v bun))"; else warn "bun is missing; the MCP half will not run"; fi
+  # tmux is what makes the agent's commands watchable. Without it desktop_run
+  # silently falls back to a pipe -- the commands still work, they just happen
+  # invisibly, which is exactly the behaviour someone would file a bug about
+  # rather than guess at.
+  if have tmux; then
+    ok "tmux ($(command -v tmux)) — agent commands run in a terminal you can watch"
+  else
+    warn "tmux is missing; agent commands will run through a pipe with nothing on screen"
+  fi
   local found_agent=0
   for a in claude gemini codex opencode; do
     if have "$a"; then

@@ -45,6 +45,9 @@ const CDP_TIMEOUT_MS = 15_000
  * it -- is what makes "only the browser we launched" true: there is no code
  * path that learns an endpoint from anywhere but our own spawn.
  */
+/** Workspace the agent-browser placement rule was last registered for. */
+let ruleFor = 0
+
 type Live = { proc: ReturnType<typeof Bun.spawn>; port: number; startedAt: number }
 let live: Live | null = null
 
@@ -143,9 +146,13 @@ export async function ensure(opts: { command?: string; headless?: boolean } = {}
   // anywhere near the process handle. It also survives relaunches, which the
   // wrapper had to redo each time.
   const ws = opts.headless ? 0 : confinementWorkspace()
-  if (ws > 0) {
+  // Registered once per workspace value, not once per launch. Hyprland keeps
+  // dynamic rules for the life of the compositor, so re-issuing an identical
+  // rule on every browser start just grows the list.
+  if (ws > 0 && ruleFor !== ws) {
     Bun.spawnSync(["hyprctl", "dispatch",
       `hl.window_rule({match={class="agent-browser"}, workspace="${ws} silent"})`])
+    ruleFor = ws
   }
   const proc = Bun.spawn(args, { stdout: "ignore", stderr: "ignore", stdin: "ignore" })
   const started = Date.now()

@@ -50,9 +50,15 @@ import path from "node:path"
 const policyPath = () =>
   process.env.DESKTOP_AGENT_POLICY || path.join(os.homedir(), ".config", "desktop-agent", "policy.jsonc")
 const AUDIT_PATH = path.join(os.homedir(), ".local", "share", "desktop-agent", "desktop.log")
-import { onWorkspace, isLaunch, confinementWorkspace, ensureAgentTerminal, sendToAgentTerminal } from "../voice/workspace.ts"
+import { onWorkspace, isLaunch, confinementWorkspace, ensureAgentTerminal, sendToAgentTerminal, abortAgentTerminal } from "../voice/workspace.ts"
 
-const TMP = path.join(os.tmpdir(), "desktop-agent")
+// Per-user scratch. /tmp/desktop-agent is created by whoever gets there first
+// and owned by them, so on a shared machine the second user hits EACCES on a
+// path they cannot fix. XDG_RUNTIME_DIR is already per-user and cleaned up on
+// logout; the uid suffix is the fallback for when it is not set.
+const TMP = process.env.XDG_RUNTIME_DIR
+  ? path.join(process.env.XDG_RUNTIME_DIR, "desktop-agent")
+  : path.join(os.tmpdir(), `desktop-agent-${process.getuid?.() ?? "user"}`)
 
 /**
  * Which identity the "agents" policy section is matched against. MCP gives the
@@ -2281,7 +2287,7 @@ server.registerTool(
     // flicker on a workspace nobody was looking at; this is a session you can
     // switch to and read, with the commands in order and their output kept.
     const term = visible && (await ensureAgentTerminal(CONFINE_WS, TMP))
-      ? sendToAgentTerminal([bin, ...argv], TMP)
+      ? sendToAgentTerminal([bin, ...argv], TMP, cwd)
       : null
 
     if (term) {
@@ -2296,7 +2302,12 @@ server.registerTool(
           break
         } catch { await sleep(200) }
       }
-      if (!Number.isFinite(code) || code === -1) timedOut = true
+      if (!Number.isFinite(code) || code === -1) {
+        timedOut = true
+        // Leave the pane usable. Without this the stalled command keeps the
+        // terminal, and the next send-keys is typed into ITS stdin.
+        abortAgentTerminal()
+      }
       try { stdout = await fs.readFile(outFile, "utf8") } catch {}
       try { await fs.unlink(outFile) } catch {}
       try { await fs.unlink(codeFile) } catch {}

@@ -94,7 +94,7 @@ export async function handOff(
       summary: loose
         // Naming the ones that exist but were not chosen, because otherwise
         // "no agent CLI" is a lie to someone who has three installed.
-        ? `No confinable agent CLI. ${loose} installed but cannot be limited to the desktop tools — set ai.provider and agent.allowUnconfined to use one anyway`
+        ? `No confinable agent CLI. ${loose} installed but cannot be limited to the desktop tools — set agent.runner and agent.allowUnconfined to use one anyway`
         : available
           ? `No compatible agent CLI for "${preferred}" (installed: ${available})`
           : "No agent CLI installed (install Claude, Gemini, Codex, or OpenCode)",
