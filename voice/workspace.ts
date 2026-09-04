@@ -143,6 +143,20 @@ export function inTerminal(
 const SESSION = "desktop-agent"
 const TITLE = "Desktop Agent"
 
+/**
+ * Which tmux window this process types into.
+ *
+ * The master uses the session's first window. Each delegated subagent gets its
+ * own, named after it, so five parallel jobs are five tabs you can flip
+ * between rather than five streams interleaved into one unreadable pane.
+ *
+ * Set per subagent at spawn, so the routing needs no bookkeeping here: a
+ * server process types where its environment says, and cannot type anywhere
+ * else.
+ */
+const WINDOW = process.env.DESKTOP_AGENT_TMUX_WINDOW?.trim() || ""
+const TARGET = WINDOW ? `${SESSION}:${WINDOW}` : SESSION
+
 /** Is the agent's terminal session alive? */
 export function agentTerminalUp(): boolean {
   try {
@@ -161,34 +175,43 @@ export function agentTerminalUp(): boolean {
  */
 export async function ensureAgentTerminal(ws: number, dir: string): Promise<boolean> {
   if (!Bun.which("tmux")) return false
-  if (!agentTerminalUp()) {
-    // The id is back, and it is not decoration.
-    //
-    // One shared pair of "last" files was fine while tool calls were
-    // serialised, which they were. The moment two calls can be in flight --
-    // parallel subagents being the obvious way -- it becomes a static buffer
-    // inside a shared function: two callers write the same two paths, and each
-    // reads whichever landed last. Not a crash. Subagent A is handed B's
-    // output and B's exit code, both report success, and the answer is
-    // confidently wrong.
-    //
-    // Task independence cannot prevent that. Two agents extracting different
-    // PDFs are perfectly independent as TASKS and still collide here, because
-    // the collision is a resource one level below what any planner can see.
-    //
-    // The cost is a visible id in the pane -- `da 3c6b38a7 pdftotext ...`
-    // rather than `da pdftotext ...`. Worth it: a readable line is not worth a
-    // silent wrong answer.
+
+  // Session first, then the window inside it, then the helper inside THAT.
+  //
+  // The order matters and getting it wrong fails silently: creating the
+  // session and sending the helper straight to "session:sub-1" writes into a
+  // window that does not exist yet, tmux says nothing, and every command from
+  // that subagent then hangs waiting for a marker file no shell will write.
+  // Exactly that happened to whichever subagent started first.
+  const sessionExisted = agentTerminalUp()
+  if (!sessionExisted) Bun.spawnSync(["tmux", "new-session", "-d", "-s", SESSION])
+
+  // A shell function lives in one shell. Whichever target is new needs its own
+  // copy of `da`; one that already exists must not have it redefined under a
+  // command in flight.
+  let fresh = !sessionExisted && !WINDOW
+  if (WINDOW) {
+    const has = Bun.spawnSync(["sh", "-c",
+      `tmux list-windows -t ${SESSION} -F '#{window_name}' 2>/dev/null | grep -qx ${shq(WINDOW)}`])
+    if (has.exitCode !== 0) {
+      Bun.spawnSync(["tmux", "new-window", "-d", "-t", SESSION, "-n", WINDOW])
+      fresh = true
+    }
+  }
+
+  if (fresh) {
     const helper =
       `da() { local id=$1; shift; ` +
       `"$@" > ${dir}/run-$id.out 2>&1; rc=$?; ` +
       `cat ${dir}/run-$id.out; ` +
       `echo $rc > ${dir}/run-$id.code; ` +
       `return $rc; }`
-    const boot = `tmux new-session -d -s ${SESSION} && tmux send-keys -t ${SESSION} ${shq(helper)} Enter && tmux send-keys -t ${SESSION} clear Enter`
-    Bun.spawnSync(["sh", "-c", boot])
+    Bun.spawnSync(["tmux", "send-keys", "-t", TARGET, helper, "Enter"])
+    Bun.spawnSync(["tmux", "send-keys", "-t", TARGET, "clear", "Enter"])
   }
-  // Attach a window to it if one is not already on screen.
+
+  // One attached terminal shows the whole session; subagent windows are tabs
+  // inside it, so only the first caller opens anything on screen.
   const term = Bun.which("foot")
     ? ["foot", "-T", TITLE, "tmux", "attach", "-t", SESSION]
     : Bun.which("wezterm")
@@ -206,6 +229,7 @@ export async function ensureAgentTerminal(ws: number, dir: string): Promise<bool
   }
   return true
 }
+
 
 /**
  * Type a command into the agent's terminal. Returns the marker file paths.
@@ -229,7 +253,7 @@ export function sendToAgentTerminal(
   // happened to have been created. A visible terminal that lies about where it
   // is is worse than no terminal.
   const cd = cwd ? `cd ${shq(cwd)} && ` : ""
-  Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, `${cd}da ${id} ${argv.map(shq).join(" ")}`, "Enter"])
+  Bun.spawnSync(["tmux", "send-keys", "-t", TARGET, `${cd}da ${id} ${argv.map(shq).join(" ")}`, "Enter"])
   return { outFile, codeFile }
 }
 
@@ -254,8 +278,8 @@ export function abortAgentTerminal(): void {
     // never ran. The abort became the thing that bricked the session it was
     // written to rescue. C-u is safe in both states -- it clears a partial
     // line and does nothing at an empty one.
-    Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, "C-c"])
-    Bun.spawnSync(["tmux", "send-keys", "-t", SESSION, "C-u"])
+    Bun.spawnSync(["tmux", "send-keys", "-t", TARGET, "C-c"])
+    Bun.spawnSync(["tmux", "send-keys", "-t", TARGET, "C-u"])
   } catch {}
 }
 

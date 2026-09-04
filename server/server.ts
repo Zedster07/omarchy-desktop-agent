@@ -85,6 +85,40 @@ const IDENTITY = process.env.DESKTOP_AGENT_IDENTITY?.trim() || "agent"
 const CONFINE_WS = confinementWorkspace()
 
 /**
+ * Master or delegated subagent.
+ *
+ * Set by the code that spawns a subagent, so a subagent cannot claim otherwise
+ * -- it never sees its own spawn arguments and cannot rewrite the environment
+ * of a process that already exists.
+ *
+ * Two things belong to the master alone, and both for the same reason: they
+ * are not parallelisable, so handing them to five subagents produces a fight
+ * rather than five times the work.
+ *
+ *   the browser   one instance, one debugger connection, one page. Five agents
+ *                 navigating it would each see whatever the last one loaded.
+ *
+ *   delegation    a subagent that can delegate can fan out without bound, and
+ *                 the fan-out is exponential rather than linear. Depth one is
+ *                 not a limitation of this design, it IS the design.
+ *
+ * Enforced here rather than asked for in a prompt. A rule the model is told
+ * about is a rule it can reason its way around when a task seems to need it;
+ * this one it simply cannot reach.
+ */
+const ROLE = process.env.DESKTOP_AGENT_ROLE?.trim() || "master"
+const IS_SUBAGENT = ROLE !== "master"
+
+const MASTER_ONLY: Record<string, string> = {
+  desktop_browser_open: "the browser belongs to the master",
+  desktop_browser_read: "the browser belongs to the master",
+  desktop_browser_click: "the browser belongs to the master",
+  desktop_browser_type: "the browser belongs to the master",
+  desktop_browser_close: "the browser belongs to the master",
+  desktop_delegate: "only the master delegates",
+}
+
+/**
  * Run shell commands in a terminal the person can watch, instead of a pipe.
  *
  * On by default. An agent that changes your machine through invisible pipes
@@ -1470,6 +1504,22 @@ function guard(tool: string, fn: (args: any) => Promise<ToolResult>) {
     const seq = ++callSeq
     const store = { tool, seq, approvals: [] as string[] }
     let failed: "refused" | "failed" | null = null
+    if (IS_SUBAGENT && MASTER_ONLY[tool]) {
+      // Told what to do instead, not just refused. A subagent that hits this
+      // should hand the need back up rather than look for another way round --
+      // and saying so is the difference between a redirect and a dead end.
+      const why = MASTER_ONLY[tool]
+      return {
+        content: [{
+          type: "text",
+          text: `REFUSED: ${why}, and you are a delegated subagent (${ROLE}).\n` +
+                `  Finish what you can with the tools you have, and return what you still need\n` +
+                `  as text in your report. The master will do it and can delegate again.`,
+        }],
+        isError: true,
+      }
+    }
+
     pulse(activityLabel(tool, args))
 
     // Held open for as long as the call takes. A download, a page load or a
