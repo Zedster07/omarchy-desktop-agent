@@ -218,6 +218,31 @@ case "${1:-doctor}" in
     keybinds
     doctor
     ;;
+  remind)
+    # A reminder without an agent.
+    #
+    # Deliberately reachable as a plain command, so tier 3 can answer "remind
+    # me at 6 to take the bins out" with one deterministic call instead of
+    # spending an agent hand-off on a notification. The expensive tier should
+    # be for work, not for remembering.
+    [[ -n "${3:-}" ]] || { bad 'usage: desktop-agent remind "<when>" "<text>"'; exit 1; }
+    bun run "$PLUGIN_DIR/voice/jobs-cli.ts" remind "$2" "$3"
+    ;;
+
+  jobs)
+    # Everything scheduled, in one place.
+    #
+    # The panel will list these too, but a schedule you can only inspect
+    # through a GUI is one you cannot check from a terminal at 2am when
+    # something has just fired and you want to know why.
+    bun run "$PLUGIN_DIR/voice/jobs-cli.ts" list
+    ;;
+
+  job-cancel)
+    [[ -n "${2:-}" ]] || { bad "usage: desktop-agent job-cancel <id|all>"; exit 1; }
+    bun run "$PLUGIN_DIR/voice/jobs-cli.ts" cancel "$2"
+    ;;
+
   agent-check)
     # Does the tier-4 hand-off actually confine the agent?
     #

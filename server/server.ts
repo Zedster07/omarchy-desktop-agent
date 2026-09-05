@@ -55,6 +55,7 @@ import { beat } from "../voice/heartbeat.ts"
 import { runPool, concurrencyLimit } from "../voice/pool.ts"
 import { closeSubagentWindows, purgeSubagentDirs } from "../voice/workspace.ts"
 import { runSubagent } from "../voice/subagent.ts"
+import { createJob, listJobs } from "../voice/schedule.ts"
 import { settingStr } from "../voice/settings.ts"
 
 // Per-user scratch. /tmp/desktop-agent is created by whoever gets there first
@@ -134,6 +135,28 @@ function sweepMarkers(): void {
   } catch {}
 }
 
+/**
+ * Capabilities a SCHEDULED job declared when it was created, or null when this
+ * is an ordinary run with a person present.
+ *
+ * A scheduled run has nobody to answer an approval, and the two obvious
+ * options are both wrong: fail closed and the job never works, or run under a
+ * blanket lease and it can do anything at 3am. So the job says up front what
+ * it needs, that list is approved once when the job is made, and at run time
+ * it is treated as already answered.
+ *
+ * The list is a ceiling, not a licence. Anything outside it is REFUSED rather
+ * than queued for a question no one is awake to hear, so a task cannot grow
+ * new powers by drifting into them -- which is the failure that matters when
+ * the thing has been running unattended every morning for a month.
+ */
+const JOB_CAPS: Set<string> | null = (() => {
+  const raw = process.env.DESKTOP_AGENT_JOB_CAPS
+  if (raw === undefined) return null
+  return new Set(raw.split(",").map(c => c.trim()).filter(Boolean))
+})()
+const JOB_ID = process.env.DESKTOP_AGENT_JOB?.trim() || ""
+
 const ROLE = process.env.DESKTOP_AGENT_ROLE?.trim() || "master"
 const IS_SUBAGENT = ROLE !== "master"
 
@@ -171,6 +194,11 @@ const MASTER_ONLY: Record<string, string> = {
   // cannot use -- all it can do is leave a window lying around for somebody
   // else to close. Opening things is the master's job because using them is.
   desktop_launch: "opening applications belongs to the master — you have no way to drive one",
+
+  // A subagent exists for the length of one micro-task. Letting it schedule
+  // would let a bounded piece of work leave something behind that outlives
+  // every part of the system that was supervising it.
+  desktop_schedule: "scheduling belongs to the master — you exist for one task",
 }
 
 /**
@@ -1211,6 +1239,25 @@ async function gate(
   noYolo?: string,
 ) {
   if (d.action === "deny") throw new Refused(refusal(toolName, d, policyError))
+
+  if (JOB_CAPS) {
+    // Outside what the job declared: refused, and told to say so rather than
+    // wait. The person will read the result in the morning; a job that hangs
+    // until its idle watchdog kills it tells them nothing.
+    if (!JOB_CAPS.has(cap)) {
+      throw new Refused(
+        `REFUSED: this scheduled job may only ${[...JOB_CAPS].join(", ") || "(nothing)"}, and "${cap}" is not on that list.\n` +
+        `  Nobody is watching, so this cannot be approved now. Finish what you can and say in your report\n` +
+        `  that the job needs "${cap}" — its capabilities can be changed by recreating it.`)
+    }
+    // On the list, so it was approved when the job was created. The floor
+    // still holds: an irreversible command is never pre-approved, because at
+    // 3am there is nobody to catch a mistaken one and no way to undo it.
+    if (d.action === "ask" && !noYolo) {
+      await audit((await loadPolicy()).policy, `job ${JOB_ID}: ${toolName} (${cap}) -- pre-approved when the job was created`)
+      return
+    }
+  }
   if (d.action !== "ask") return
 
   const key = `${toolName}\u0000${scope}`
@@ -1724,6 +1771,74 @@ server.registerTool(
       ? `${results.length - failed} of ${results.length} finished, ${failed} failed. Use what succeeded and say plainly what is missing.`
       : `All ${results.length} finished.`)
     return say(out.join("\n"))
+  }),
+)
+
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "desktop_schedule",
+  {
+    description:
+      "Schedule something for later or for repeatedly: a reminder, or a task you will carry out then. " +
+      "Use kind='reminder' for anything that is just a message to the person at a time -- it sends a notification and runs no agent at all, " +
+      "which is what most requests of this shape actually want. " +
+      "Use kind='task' only when work must genuinely be DONE at that time, and list the capabilities it will need: " +
+      "a scheduled task runs with nobody watching, so it cannot ask for anything it did not declare. " +
+      "Creating a schedule asks the person first, and shows them exactly what it will be allowed to do.",
+    inputSchema: {
+      kind: z.enum(["reminder", "task"]).describe("reminder = a notification; task = an agent run"),
+      text: z.string().min(1).describe("What to say (reminder) or what to do (task)."),
+      when: z.string().min(1).describe(
+        "A systemd calendar time: 'tomorrow 09:00', '2026-09-06 14:30', 'Mon..Fri 08:30', '*-*-* 07:00:00'."),
+      recurrent: z.boolean().describe("true repeats on that schedule; false fires once and removes itself."),
+      capabilities: z.array(z.enum(ALL_CAPS as unknown as [string, ...string[]])).optional()
+        .describe("For kind='task': everything it may do. Ask for the least that will work; it cannot be widened at run time."),
+    },
+  },
+  guard("desktop_schedule", async (args: {
+    kind: "reminder" | "task"; text: string; when: string; recurrent: boolean; capabilities?: string[]
+  }) => {
+    const { policy, error } = await loadPolicy()
+    if (!policy.enabled) throw new Refused('REFUSED: policy "enabled" is false — desktop control is switched off')
+
+    // A schedule outlives the conversation that made it, so it is agreed to
+    // once, in front of the person, with its powers written out. This is the
+    // moment that decides what runs unattended later.
+    const caps = args.kind === "task" ? (args.capabilities ?? []) : []
+    const d: Decision = {
+      action: "ask",
+      subject: `${args.recurrent ? "repeating" : "one-off"} ${args.kind}: ${args.text.slice(0, 80)}`,
+      reasons: [
+        `when: ${args.when}`,
+        args.kind === "task"
+          ? `may: ${caps.length ? caps.join(", ") : "(nothing declared — it will be able to do nothing)"}`
+          : "sends a notification; runs no agent",
+        args.recurrent ? "repeats until cancelled or expired (90 days)" : "fires once, then removes itself",
+      ],
+    }
+    await gate("desktop_schedule", "observe", d, error, `schedule:${args.kind}`,
+      // Never pre-approved by a lease or by another job's capabilities:
+      // creating a schedule is how a single run becomes a standing one, and
+      // that should always be a decision somebody makes awake.
+      "creating a schedule is always confirmed in person")
+
+    const existing = listJobs()
+    if (existing.length >= 20) {
+      throw new Refused(`REFUSED: 20 jobs already scheduled. Cancel some first (desktop-agent jobs).`)
+    }
+
+    const r = createJob({
+      kind: args.kind, text: args.text, when: args.when,
+      recurrent: args.recurrent, capabilities: caps,
+    })
+    if (!r.ok) throw new Error(r.error ?? "could not schedule it")
+
+    await audit(policy, `scheduled ${args.kind} ${r.job!.id}: ${args.when} — ${args.text.slice(0, 60)}`)
+    return say(
+      `scheduled: ${r.job!.id}\n` +
+      `  ${args.recurrent ? "repeats" : "once"} at ${args.when}\n` +
+      (caps.length ? `  may: ${caps.join(", ")}\n` : "") +
+      `  cancel with: desktop-agent job-cancel ${r.job!.id}`)
   }),
 )
 

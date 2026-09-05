@@ -1,0 +1,55 @@
+#!/usr/bin/env bun
+// Listing and cancelling schedules from a terminal.
+
+import { listJobs, cancelJob, pruneJobs, nextRuns, createJob } from "./schedule.ts"
+
+const cmd = process.argv[2] ?? "list"
+
+if (cmd === "list") {
+  const dropped = pruneJobs()
+  const jobs = listJobs()
+  const next = nextRuns()
+  if (!jobs.length) {
+    console.log("  nothing scheduled" + (dropped ? `  (${dropped} expired job(s) removed)` : ""))
+    process.exit(0)
+  }
+  console.log(`  ${jobs.length} scheduled${dropped ? `, ${dropped} expired removed` : ""}\n`)
+  for (const j of jobs) {
+    const kind = j.kind === "reminder" ? "reminder" : "task"
+    const rep = j.recurrent ? "repeats" : "once"
+    console.log(`  ${j.id}  ${kind.padEnd(8)} ${rep.padEnd(7)} ${j.when}`)
+    console.log(`      ${j.text.slice(0, 76)}`)
+    if (j.kind === "task" && j.capabilities.length) {
+      console.log(`      may: ${j.capabilities.join(", ")}`)
+    }
+    if (next[j.id]) console.log(`      next: ${next[j.id]}`)
+    if (j.expiresAt) console.log(`      expires: ${new Date(j.expiresAt).toISOString().slice(0, 10)}`)
+    console.log()
+  }
+  process.exit(0)
+}
+
+if (cmd === "cancel") {
+  const target = process.argv[3]
+  if (target === "all") {
+    const all = listJobs()
+    for (const j of all) cancelJob(j.id)
+    console.log(`  cancelled ${all.length}`)
+    process.exit(0)
+  }
+  console.log(cancelJob(target!) ? `  cancelled ${target}` : `  no job called ${target}`)
+  process.exit(0)
+}
+
+if (cmd === "remind") {
+  const when = process.argv[3]
+  const text = process.argv.slice(4).join(" ")
+  if (!when || !text) { console.error('usage: jobs-cli.ts remind "<when>" "<text>"'); process.exit(2) }
+  const r = createJob({ kind: "reminder", text, when, recurrent: /^(mon|tue|wed|thu|fri|sat|sun|daily|weekly|\*)/i.test(when) })
+  if (!r.ok) { console.error(`  ${r.error}`); process.exit(1) }
+  console.log(`  reminder set for ${when} (${r.job!.id})`)
+  process.exit(0)
+}
+
+console.error("usage: jobs-cli.ts list | cancel <id|all> | remind <when> <text>")
+process.exit(2)

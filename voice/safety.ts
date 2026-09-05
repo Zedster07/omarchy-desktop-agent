@@ -74,6 +74,20 @@ export function checkProposedCommand(argv: string[]): Allowed | Refusal {
     return { ok: false, token: prog,
              reason: `${prog} would re-enter a shell, which puts every other rule out of reach` }
   }
+  // This plugin's own CLI can change settings, install units and rewrite the
+  // agent's configuration, so it is on the destructive list and stays there.
+  // One subcommand is exempt: `remind` only sets a notification for a time,
+  // which is exactly the kind of thing someone says out loud, and routing it
+  // through an agent hand-off instead would spend a model on remembering.
+  //
+  // Named explicitly rather than by prefix. "desktop-agent" is not safe; that
+  // one verb is.
+  if (prog === "desktop-agent") {
+    if (argv[1] === "remind") return { ok: true }
+    return { ok: false, token: `${prog} ${argv[1] ?? ""}`.trim(),
+             reason: `desktop-agent can change this plugin's own configuration; only "desktop-agent remind" may be run from a spoken request` }
+  }
+
   if (DESTRUCTIVE.has(prog)) {
     return { ok: false, token: prog,
              reason: `${prog} is not something a misheard sentence should be able to run` }

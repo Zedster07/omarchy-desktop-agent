@@ -230,6 +230,9 @@ ${installedApps().join(", ")}
 Rules:
 - Commands run as argv arrays. There is NO shell: no pipes, redirects, globs, $(...) or ;.
 - Never use sudo, a shell, a package manager, or anything that deletes, moves or overwrites files.
+- For a reminder -- anything shaped like "remind me at/in X to Y" -- use:
+    ["desktop-agent", "remind", "<systemd time>", "<what to say>"]
+  systemd times look like "tomorrow 09:00", "2026-09-06 14:30", "Mon..Fri 08:30" or "*-*-* 07:00:00"; work out the absolute time yourself from what they said. It sends a notification then and runs no agent, which is the whole of what a reminder is.
 - mpv, vlc and other players are for files ON THIS MACHINE. Never hand one a URL, a ytdl:// address or a ytsearch query — that is rejected before it runs. Anything on the web opens in the BROWSER, where it can be paused, skipped, searched from and closed. A background player satisfies the sentence and not the request: no window, nothing to press, and noise coming from nowhere.
 - FINISH the request. Do not stop at a step that merely gets close to it. Opening a search page for something you were asked to PLAY is not playing it: the person asked for a song and got a list of links, which is the same failure as opening a homepage.
 - So if the request is to actually play, watch or listen to something, and you cannot name the exact URL that starts it, that is not a job for commands. Hand it to the agent, which can open the page, pick the right result and press play. Do not settle for a search page and call it done.

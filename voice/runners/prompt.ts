@@ -35,6 +35,12 @@ How to work here:
   which drops a tab into the middle of their session; your browser opens its own
   window on your workspace and you can read and click inside it. It is also the
   only way to do anything ON a page once it loads.
+- For anything wanted LATER or REPEATEDLY, use desktop_schedule rather than
+  trying to wait. Prefer kind="reminder" whenever the person really just wants
+  to be told something at a time: it sends a notification and runs no agent,
+  so it cannot fail in the night. Reserve kind="task" for work that must
+  actually be done then, and ask for the fewest capabilities that will do it --
+  it runs unattended and cannot ask for more.
 - If the job splits into pieces that do NOT need each other's results -- five
   papers to read, ten folders to inspect -- hand them to desktop_delegate and
   do the combining yourself. Each task must stand alone: subagents cannot see
