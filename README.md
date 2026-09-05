@@ -21,6 +21,55 @@ kill switch that is a single line in a file you own.
 > back, and `desktop-agent uninstall` prints the exact lines to remove if you
 > ever want Voxtype back.
 
+## Installing
+
+```bash
+omarchy plugin add https://github.com/Zedster07/omatron --enable
+```
+
+That clones it into `~/.config/omarchy/plugins/` and registers it with the
+shell, which is what gives you the panel, the HUD and the approval overlay.
+Then, from that directory:
+
+```bash
+~/.config/omarchy/plugins/io.github.zedster07.desktop-agent/bin/desktop-agent setup
+```
+
+`setup` seeds the policy, installs and starts the voice daemon, links the
+commands into `~/.local/bin`, and prints the keybindings to paste into
+`~/.config/hypr/bindings.lua`. Paste them, `hyprctl reload`, and press `F10`.
+
+Two things it cannot do for you:
+
+**An API key.** Transcription runs against Groq by default, so nothing is
+downloaded — get a free key at [console.groq.com](https://console.groq.com) and
+paste it into the panel's voice tab. Prefer to keep audio on the machine? Pick
+`local` in the same tab; it shows the download size and asks first.
+
+**The agent half.** Tiers 3 and 4 need an agent CLI. If you have Claude Code:
+
+```bash
+desktop-agent mcp-install     # registers the desktop tools
+desktop-agent agent-check     # confirms the agent is confined to them
+```
+
+Then `desktop-agent doctor` tells you what is still missing. It checks the two
+things a fresh install most often gets wrong — commands not on `PATH`, and the
+plugin not registered with the shell — because both fail silently: the
+keybindings do nothing and the panel shows blanks.
+
+### Removing it
+
+```bash
+desktop-agent uninstall                 # cancels schedules, stops services
+omarchy plugin remove io.github.zedster07.desktop-agent
+```
+
+`uninstall` prints the exact keybinding lines to delete from your
+`bindings.lua`, with line numbers. Those are the one thing that outlives the
+plugin: the `hl.unbind("F9")` it asked you to add keeps working after it is
+gone, so Voxtype would stay dead until you remove them.
+
 ## Two front-ends, one gate
 
 ```

@@ -384,7 +384,11 @@ Item {
       "[ -e \"$1\" ] && echo disabled || echo enabled; " +
       "[ -r \"$2\" ] && echo readable || echo unreadable; " +
       // Voice readiness checks the desktop-agent-voice daemon's UNIX socket.
-      "[ -S \"${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock\" ] && echo voice-up || echo voice-down",
+      // Connect, do not just look. A killed daemon leaves its socket file
+      // behind, and testing for the file reported "voice ready" with nothing
+      // listening -- which is exactly what a fresh install shows after a
+      // previous one was removed.
+      "socat -u /dev/null \"UNIX-CONNECT:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock\" 2>/dev/null && echo voice-up || echo voice-down",
       "probe", root.disabledFlag, root.policyPath]
     stdout: SplitParser {
       onRead: function(line) {

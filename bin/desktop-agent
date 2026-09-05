@@ -51,7 +51,9 @@ doctor() {
     fi
   fi
 
-  if [[ -S "${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock" ]]; then
+  # Connecting, not just looking: a killed daemon leaves its socket behind, and
+  # the file test reported a running daemon with nothing listening.
+  if socat -u /dev/null "UNIX-CONNECT:${XDG_RUNTIME_DIR:-/run/user/$(id -u)}/desktop-agent-voice.sock" 2>/dev/null; then
     ok "voice daemon running"
   else
     bad "voice daemon down  (systemctl --user start desktop-agent-voice)"; missing=1
@@ -76,6 +78,18 @@ doctor() {
     ok "command-mode keybinding present"
   else
     warn "no command-mode keybinding  (run: desktop-agent keybinds)"
+  fi
+
+  # Two things a fresh install gets wrong that nothing else notices.
+  if [[ -L "$HOME/.local/bin/desktop-agent" || -x "$HOME/.local/bin/desktop-agent" ]]; then
+    ok "commands linked into ~/.local/bin"
+  else
+    bad "commands not on PATH — F9 and the panel will silently do nothing  (run: desktop-agent link)"
+  fi
+  if [[ -d "$HOME/.config/omarchy/plugins/io.github.zedster07.desktop-agent" ]]; then
+    ok "registered with the Omarchy shell"
+  else
+    bad "not installed as an Omarchy plugin — no panel, no HUD, no approval overlay  (omarchy plugin add https://github.com/Zedster07/omatron --enable)"
   fi
 
   echo; bold "Policy"
@@ -184,6 +198,28 @@ BINDS
 
 case "${1:-doctor}" in
   doctor) doctor ;;
+  link)
+    # Put the commands where a shell can find them.
+    #
+    # Everything else assumes this and nothing did it. The messages say "run:
+    # desktop-agent setup", the panel shells out to `desktop-agent-config all`,
+    # and the keybindings people paste call `desktop-agent-listen start
+    # dictate` -- so without this, F9 does nothing and the panel shows
+    # fallbacks for every reading. It worked during development only because
+    # the author had already put it on PATH by hand, which is the most
+    # dangerous kind of setup step: invisible to the person who took it.
+    mkdir -p "$HOME/.local/bin"
+    for f in "$PLUGIN_DIR"/bin/*; do
+      n="$(basename "$f")"
+      ln -sfn "$f" "$HOME/.local/bin/$n"
+      ok "$n -> ~/.local/bin"
+    done
+    case ":$PATH:" in
+      *":$HOME/.local/bin:"*) ;;
+      *) warn "~/.local/bin is not on your PATH — add it to your shell profile, or the commands above will not be found" ;;
+    esac
+    ;;
+
   setup)
     mkdir -p "$HOME/.config/desktop-agent" "$UNITS"
 
@@ -195,6 +231,10 @@ case "${1:-doctor}" in
     if [[ ! -f "$HOME/.config/desktop-agent/policy.jsonc" ]]; then
       cp "$PLUGIN_DIR/server/policy.default.jsonc" "$HOME/.config/desktop-agent/policy.jsonc"
       ok "policy seeded at ~/.config/desktop-agent/policy.jsonc"
+
+    # Before anything that tells the user to run a command by name.
+    bold "Linking commands into ~/.local/bin"
+    "$0" link
     else
       ok "policy already present — left alone"
     fi
