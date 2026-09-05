@@ -1821,16 +1821,21 @@ server.registerTool(
         args.recurrent ? "repeats until cancelled or expired (90 days)" : "fires once, then removes itself",
       ],
     }
+    // Checked BEFORE asking, not after. The other order raises an approval
+    // card, waits for a person to read and accept it, and then refuses anyway
+    // -- which teaches them that approving does not mean the thing happens.
+    const existing = listJobs()
+    if (existing.length >= 20) {
+      throw new Refused(
+        `REFUSED: 20 jobs are already scheduled, which is the limit. ` +
+        `See them with "desktop-agent jobs" and cancel some first.`)
+    }
+
     await gate("desktop_schedule", "observe", d, error, `schedule:${args.kind}`,
       // Never pre-approved by a lease or by another job's capabilities:
       // creating a schedule is how a single run becomes a standing one, and
       // that should always be a decision somebody makes awake.
       "creating a schedule is always confirmed in person")
-
-    const existing = listJobs()
-    if (existing.length >= 20) {
-      throw new Refused(`REFUSED: 20 jobs already scheduled. Cancel some first (desktop-agent jobs).`)
-    }
 
     const r = createJob({
       kind: args.kind, text: args.text, when: args.when,
