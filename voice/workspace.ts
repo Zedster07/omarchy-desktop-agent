@@ -258,28 +258,44 @@ export function sendToAgentTerminal(
 }
 
 /**
- * Close the windows delegated subagents were typing into.
+ * Close the tmux windows delegated subagents were typing into.
  *
- * Called when a run ends, so windows do not pile up across runs. The master's
- * own window is left alone -- it holds the session, and killing it would take
- * the session with it.
+ * Windows only. Their scratch directories STAY, because the master is about to
+ * read them: subagents are told to leave bulk output in a file and name the
+ * path, and an over-long report is truncated with a note saying the full text
+ * is still there. Deleting the directories here made both of those promises
+ * false eight lines after they were made -- the master would follow a path
+ * this code had just removed.
  *
- * Each subagent's scratch directory goes too. Nothing waits on those markers
- * once the subagent that owned them has exited, and a per-subagent directory
- * that is never removed is a slow leak with a tidy name.
+ * The master's own window is left alone: it holds the session, and killing it
+ * would take the session with it.
  */
-export function closeSubagentWindows(dir: string): void {
+export function closeSubagentWindows(): void {
   if (!Bun.which("tmux")) return
   try {
     const listed = Bun.spawnSync(["tmux", "list-windows", "-t", SESSION, "-F", "#{window_name}"])
-    const names = new TextDecoder().decode(listed.stdout).split("\n").filter(n => /^sub-/.test(n))
-    for (const n of names) {
+    for (const n of new TextDecoder().decode(listed.stdout).split("\n").filter(n => /^sub-/.test(n))) {
       Bun.spawnSync(["tmux", "kill-window", "-t", `${SESSION}:${n}`])
-      try { require("node:fs").rmSync(`${dir}/${n}`, { recursive: true, force: true }) } catch {}
     }
   } catch {}
 }
 
+/**
+ * Delete the subagents' scratch directories.
+ *
+ * Called when the whole run is over, or at the START of a new batch to clear
+ * the last one -- never at the end of a batch whose results are still being
+ * read. Space that outlives its usefulness by one run is a far smaller problem
+ * than a path that vanishes while it is being followed.
+ */
+export function purgeSubagentDirs(dir: string): void {
+  try {
+    for (const n of require("node:fs").readdirSync(dir)) {
+      if (!/^sub-\d+$/.test(n)) continue
+      try { require("node:fs").rmSync(`${dir}/${n}`, { recursive: true, force: true }) } catch {}
+    }
+  } catch {}
+}
 
 /**
  * Interrupt whatever is running in the agent's terminal.

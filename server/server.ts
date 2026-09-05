@@ -53,7 +53,7 @@ const AUDIT_PATH = path.join(os.homedir(), ".local", "share", "desktop-agent", "
 import { onWorkspace, isLaunch, confinementWorkspace, ensureAgentTerminal, sendToAgentTerminal, abortAgentTerminal } from "../voice/workspace.ts"
 import { beat } from "../voice/heartbeat.ts"
 import { runPool, concurrencyLimit } from "../voice/pool.ts"
-import { closeSubagentWindows } from "../voice/workspace.ts"
+import { closeSubagentWindows, purgeSubagentDirs } from "../voice/workspace.ts"
 import { runSubagent } from "../voice/subagent.ts"
 import { settingStr } from "../voice/settings.ts"
 
@@ -1676,14 +1676,26 @@ server.registerTool(
     }
     if (error) throw new Refused(`REFUSED: ${error}`)
 
+    // Last batch's directories go now, not at the end of this one. Whatever a
+    // previous wave left is certainly finished with; what THIS wave writes is
+    // about to be read by the master.
+    purgeSubagentDirs(TMP)
+
     const limit = concurrencyLimit(Number(await settingStr("agent.maxSubagents", "4")))
     const idleMs = Number(await settingStr("agent.idleSec", "120")) * 1000
     const maxMs = Number(await settingStr("agent.maxRunSec", "3600")) * 1000
 
     await audit(policy, `delegate ${args.tasks.length} task(s), ${limit} at a time`)
 
-    const results = await runPool(args.tasks, limit, (task, i) =>
-      runSubagent(task, i, { workspace: CONFINE_WS || 10, idleMs, maxMs }))
+    let results
+    try {
+      results = await runPool(args.tasks, limit, (task, i) =>
+        runSubagent(task, i, { workspace: CONFINE_WS || 10, idleMs, maxMs }))
+    } finally {
+      // In a finally, because a throw between here and the return would
+      // otherwise leave four windows open with no batch running behind them.
+      closeSubagentWindows()
+    }
 
     // Reported per task, in the order they were given, with failures named.
     // A join that has to work out which answer belongs to which task will
@@ -1708,12 +1720,6 @@ server.registerTool(
         : body)
       out.push("")
     })
-    // Cleaned here, not in the voice daemon. The daemon only sees hand-offs it
-    // started: a master calling delegate twice in one conversation, or any
-    // plain MCP client using this server, would leave windows and directories
-    // behind. Cleanup belongs where the batch ends.
-    closeSubagentWindows(TMP)
-
     out.unshift(failed
       ? `${results.length - failed} of ${results.length} finished, ${failed} failed. Use what succeeded and say plainly what is missing.`
       : `All ${results.length} finished.`)

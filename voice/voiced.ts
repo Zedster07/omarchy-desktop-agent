@@ -23,7 +23,7 @@ import { loadIntents } from "./registry.ts"
 import { resolveRequest } from "./plan.ts"
 import { handOff, overlayReady, stopAgent } from "./agent.ts"
 import { remember, asContext } from "./history.ts"
-import { closeSubagentWindows } from "./workspace.ts"
+import { closeSubagentWindows, purgeSubagentDirs } from "./workspace.ts"
 import { setting, settingStr } from "./settings.ts"
 import { resolveTarget, listApps } from "./apps.ts"
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, appendFileSync } from "node:fs"
@@ -347,7 +347,11 @@ async function runAgent(phrase: string, why: string) {
   const out = await handOff(phrase, { workspace, onProgress: tick })
   // Whatever the outcome. A failed or stopped run leaves subagent windows and
   // scratch directories behind exactly like a successful one does.
-  closeSubagentWindows(`${process.env.XDG_RUNTIME_DIR || "/tmp"}/desktop-agent`)
+  // The run is over, so the directories can go too -- this is the point at
+  // which nobody is going to read them.
+  const scratch = `${process.env.XDG_RUNTIME_DIR || "/tmp"}/desktop-agent`
+  closeSubagentWindows()
+  purgeSubagentDirs(scratch)
   log(`agent: ${out.ok ? "done" : "failed"} — ${out.summary}`)
   remember(phrase, out.ok ? out.summary : `failed: ${out.summary}`, "agent")
 

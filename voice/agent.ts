@@ -234,7 +234,16 @@ export async function handOff(
   const argv = bridge
     ? sandboxArgv(prepared.argv, {
         socket: bridge.socket,
-        writable: [STATE, runDir, `${HOME}/.${runner.id}`, `${HOME}/.config/${runner.id}`],
+        writable: [
+          STATE, runDir,
+          // Where the runners actually keep state. A read-only mount here does
+          // not fail at startup, it fails on the first token refresh or cache
+          // write -- late, and looking like something else.
+          `${HOME}/.${runner.id}`,
+          `${HOME}/.config/${runner.id}`,
+          `${HOME}/.local/share/${runner.id}`,
+          `${HOME}/.cache/${runner.id}`,
+        ],
       })
     : prepared.argv
 

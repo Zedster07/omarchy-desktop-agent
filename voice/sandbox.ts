@@ -28,6 +28,7 @@
 // cannot claim to be the master because it cannot reach the master's socket.
 
 import { existsSync, mkdirSync, rmSync } from "node:fs"
+import { killTree } from "./killtree.ts"
 
 const RUNTIME = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? 1000}`
 
@@ -93,7 +94,10 @@ export async function startBridge(name: string, env: Record<string, string>): Pr
   return {
     socket,
     stop: () => {
-      try { proc.kill() } catch {}
+      // The tree, not the listener. socat forks a child per connection, so
+      // killing the parent leaves any in-flight server reparented to init --
+      // still holding the compositor sockets the sandbox exists to withhold.
+      try { killTree(proc.pid) } catch { try { proc.kill() } catch {} }
       try { rmSync(socket, { force: true }) } catch {}
     },
   }
@@ -126,6 +130,10 @@ export function sandboxArgv(inner: string[], opts: { socket: string; writable: s
     "--unsetenv", "WAYLAND_DISPLAY",
     "--unsetenv", "HYPRLAND_INSTANCE_SIGNATURE",
     "--unsetenv", "DISPLAY",
+    // Points at /run/user/<uid>/bus, which the tmpfs above replaced. Leaving
+    // it set does not grant access -- it makes anything that tries to connect
+    // wait for a timeout instead of failing immediately.
+    "--unsetenv", "DBUS_SESSION_BUS_ADDRESS",
     "--share-net",
     "--die-with-parent",
   ]

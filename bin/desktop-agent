@@ -94,6 +94,11 @@ doctor() {
   # silently falls back to a pipe -- the commands still work, they just happen
   # invisibly, which is exactly the behaviour someone would file a bug about
   # rather than guess at.
+  if have bwrap && have socat; then
+    ok "bwrap + socat — agents that keep their own shell can be sandboxed away from the desktop"
+  else
+    warn "bwrap or socat missing; runners other than Claude cannot be sandboxed and will be refused"
+  fi
   if have tmux; then
     ok "tmux ($(command -v tmux)) — agent commands run in a terminal you can watch"
   else
