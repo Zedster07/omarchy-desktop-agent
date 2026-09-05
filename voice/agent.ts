@@ -14,6 +14,7 @@
 
 import { settingStr } from "./settings.ts"
 import { resetBeat, sinceBeat } from "./heartbeat.ts"
+import { killTree } from "./killtree.ts"
 import { getRunner, listAvailableRunners, unconfinedRunners, taskPrompt } from "./runners/index.ts"
 
 export { taskPrompt }
@@ -50,17 +51,20 @@ export async function overlayReady(target: string): Promise<boolean> {
 // kept driving the desktop, which is worse than having no cancel, because it
 // looked stopped.
 let running: { kill: (sig?: number) => void } | null = null
+let runningPid = 0
 let stopped = false
 
 /** Stop the hand-off in flight. Returns whether there was one. */
 export function stopAgent(): boolean {
   if (!running) return false
   stopped = true
-  try { running.kill() } catch {}
-  // SIGKILL shortly after, in case it is wedged in a tool call and ignores the
-  // polite one. Nothing here is worth waiting on.
-  const p = running
-  setTimeout(() => { try { p.kill(9) } catch {} }, 1500)
+  // The whole tree, not just the handle we hold.
+  //
+  // A master that delegates has children, and killing only the master orphans
+  // them: it dies, the HUD says stopped, and its subagents carry on driving
+  // the desktop with a live lease behind them. Stop has to mean stop.
+  if (runningPid) killTree(runningPid)
+  else { try { running.kill() } catch {} }
   return true
 }
 
@@ -183,6 +187,7 @@ export async function handOff(
   })
 
   running = proc
+  runningPid = proc.pid
   stopped = false
   resetBeat()
 
@@ -192,7 +197,9 @@ export async function handOff(
     if (Date.now() - startedAt > maxMs) killedBy = "max"
     else if (sinceBeat() > idleMs) killedBy = "idle"
     else return
-    try { proc.kill() } catch {}
+    // Same reasoning as stopAgent: a timed-out master must not leave working
+    // subagents behind it.
+    killTree(proc.pid)
   }, 5000)
   const ticker = setInterval(() => opts.onProgress?.("working"), 4000)
 
@@ -235,6 +242,7 @@ export async function handOff(
     return { ok: true, summary: summary.slice(0, 200) || "Done", report: out }
   } finally {
     running = null
+    runningPid = 0
     clearInterval(killer)
     clearInterval(ticker)
     if (prepared.cleanup) {

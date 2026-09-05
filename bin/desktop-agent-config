@@ -68,6 +68,12 @@ DEFAULTS = {
         # forever. Hours, not minutes -- it is there so nothing runs unattended
         # indefinitely, not to bound real work.
         "maxRunSec": 3600,
+        # How many delegated subagents may run at once. Queued beyond this,
+        # not refused: ten tasks at a limit of four is three waves. Capped at
+        # 8 in code -- each one is a live conversation, an MCP server and a
+        # share of the machine, so the ceiling is a resource fact rather than
+        # a preference.
+        "maxSubagents": 4,
         # Allow an agent CLI that cannot be limited to the desktop tools.
         #
         # Off, and it should stay off. The desktop policy only sees calls that
