@@ -1705,6 +1705,28 @@ function describeCall(tool: string, args: any): string {
 
 const server = new McpServer({ name: "desktop", version: "2.0.0" })
 
+// Master-only tools are not merely refused to a subagent -- they are not
+// offered to it.
+//
+// Refusing at call time is the backstop and it works, but a tool that appears
+// in the list is a tool the model will reason about, attempt, and spend a turn
+// discovering it cannot have. Worse, it invites working around: an agent told
+// "you may not use the browser" while looking at a browser tool will look for
+// another way to browse. Removing it from the list removes the idea.
+//
+// The refusal in guard() stays as defence in depth: registration is decided
+// once at startup from the environment, and anything that reaches a handler by
+// some other route still stops there.
+{
+  const registerAll = server.registerTool.bind(server)
+  ;(server as unknown as { registerTool: typeof registerAll }).registerTool = ((
+    name: string, spec: unknown, handler: unknown,
+  ) => {
+    if (IS_SUBAGENT && MASTER_ONLY[name]) return undefined as never
+    return registerAll(name as never, spec as never, handler as never)
+  }) as typeof registerAll
+}
+
 // ---------------------------------------------------------------------------
 server.registerTool(
   "desktop_delegate",
