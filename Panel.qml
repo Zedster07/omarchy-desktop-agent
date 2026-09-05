@@ -426,14 +426,12 @@ Panel {
             // whole card, and the gaps between blocks kept showing the desktop.
             Rectangle {
                 anchors.fill: parent
-                anchors.margins: -panel.padding
-                radius: Style.cornerRadius
+                    radius: Style.cornerRadius
                 color: Theme.cardBackground
             }
             Rectangle {
                 anchors.fill: parent
-                anchors.margins: -panel.padding
-                radius: Style.cornerRadius
+                    radius: Style.cornerRadius
                 color: "transparent"
                 border.width: Style.spacing.hairline
                 border.color: Util.alpha(root.tone, 0.25)
