@@ -1643,20 +1643,92 @@ function activityLabel(tool: string, a: any): string {
   }
 }
 
+/**
+ * The plugin's own surfaces, and where they are on screen.
+ *
+ * An agent that can click and type can operate the UI that governs it: the
+ * approval card, the panel with its settings, the prompt. Blocking input while
+ * a card is up was half the answer -- it stopped the obvious case and left the
+ * principle unstated. The principle is that the machinery deciding what an
+ * agent may do must not itself be reachable by that agent.
+ *
+ * "Keep the dangerous switch in a config file" was the wrong way to say this.
+ * It protects by location, which means the protection disappears the moment
+ * the switch is put somewhere convenient -- and a settings panel nobody can
+ * use without editing JSON is a bad answer to a real question.
+ */
+const OWN_SURFACES = [
+  "omarchy-desktop-agent-prompt",
+  "omarchy-desktop-agent-approval",
+  "omarchy-desktop-agent-recap",
+  "omarchy-desktop-agent-voice",
+  // The panel shares Omarchy's bar-flyout namespace, so it cannot be told
+  // apart by name. It is covered by the keyboard rule below and by refusing
+  // clicks while it is open.
+  "omarchy-keyboard-panel",
+]
+
+interface Rect { x: number; y: number; w: number; h: number; ns: string }
+
+/** Where our surfaces currently are, or [] if none are mapped. */
+async function ownSurfaceRects(): Promise<Rect[]> {
+  try {
+    const p = Bun.spawn(["hyprctl", "-j", "layers"], { stdout: "pipe", stderr: "ignore" })
+    const data = JSON.parse(await new Response(p.stdout).text())
+    const out: Rect[] = []
+    for (const mon of Object.values<any>(data)) {
+      for (const level of Object.values<any>(mon?.levels ?? {})) {
+        for (const l of level as any[]) {
+          if (OWN_SURFACES.includes(String(l.namespace))) {
+            out.push({ x: l.x, y: l.y, w: l.w, h: l.h, ns: String(l.namespace) })
+          }
+        }
+      }
+    }
+    return out
+  } catch { return [] }
+}
+
+/** Would a click at (x, y) land on something of ours? */
+function insideOwnSurface(rects: Rect[], x: number, y: number): Rect | null {
+  return rects.find(r => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) ?? null
+}
+
 function guard(tool: string, fn: (args: any) => Promise<ToolResult>) {
   return async (args: any): Promise<ToolResult> => {
     const seq = ++callSeq
     const store = { tool, seq, approvals: [] as string[] }
     let failed: "refused" | "failed" | null = null
-    if (awaitingApproval > 0 && INPUT_TOOLS.has(tool)) {
-      return {
-        content: [{
-          type: "text",
-          text: `REFUSED: an approval is on screen and "${tool}" could answer it.\n` +
-                `  Wait for the person to decide. Their answer comes back as the result of the\n` +
-                `  call that raised it — you do not need to do anything to receive it.`,
-        }],
-        isError: true,
+    if (INPUT_TOOLS.has(tool)) {
+      // Keystrokes go wherever focus is, and our prompt and approval card take
+      // focus exclusively -- so typing while one is up types INTO it. The
+      // approval counter catches the card; the surface check catches the
+      // prompt and anything else of ours that is mapped, without needing to
+      // know which is focused.
+      if (awaitingApproval > 0) {
+        return {
+          content: [{
+            type: "text",
+            text: `REFUSED: an approval is on screen and "${tool}" could answer it.\n` +
+                  `  Wait for the person to decide. Their answer comes back as the result of the\n` +
+                  `  call that raised it — you do not need to do anything to receive it.`,
+          }],
+          isError: true,
+        }
+      }
+      if (tool !== "desktop_mouse") {
+        const up = (await ownSurfaceRects()).filter(r => r.ns !== "omarchy-keyboard-panel")
+        if (up.length) {
+          return {
+            content: [{
+              type: "text",
+              text: `REFUSED: this plugin's own interface is on screen (${up.map(r => r.ns).join(", ")}),\n` +
+                    `  and it holds the keyboard — anything typed now goes into it rather than the\n` +
+                    `  application you meant. Wait for it to close.`,
+            }],
+            isError: true,
+          }
+        }
       }
     }
 
@@ -2562,6 +2634,24 @@ server.registerTool(
       const cur = await cursorPos()
       const x = Math.round(args.x ?? cur.x)
       const y = Math.round(args.y ?? cur.y)
+
+      // Not onto our own surfaces. The approval card, the prompt and the
+      // settings panel are how a person controls this agent; an agent that can
+      // click them controls the thing that controls it. Checked by geometry
+      // rather than by intent, because "do not click Allow" is advice and this
+      // is a rule.
+      const own = await ownSurfaceRects()
+      const hitFrom = insideOwnSurface(own, x, y)
+      const hitTo = args.to_x !== undefined && args.to_y !== undefined
+        ? insideOwnSurface(own, Math.round(args.to_x), Math.round(args.to_y))
+        : null
+      const hit = hitFrom ?? hitTo
+      if (hit) {
+        throw new Refused(
+          `REFUSED: (${x}, ${y}) is inside this plugin's own interface (${hit.ns}).\n` +
+          `  Approvals, the prompt and the settings panel are the person's controls over you.\n` +
+          `  Whatever you need there, ask for it in your answer instead.`)
+      }
 
       // Whatever sits under the target point is what we are really acting on,
       // so it is that window's "input" verb that has to permit this.
