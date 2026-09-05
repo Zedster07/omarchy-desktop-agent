@@ -151,13 +151,8 @@ Panel {
             }
         }
     }
-    Process {
-        id: capWriteProc
-        onExited: capsProc.running = true
-    }
     function setCap(name, value) {
-        capWriteProc.command = ["desktop-agent-config", "policy-set-cap", name, value];
-        capWriteProc.running = true;
+        root.queueWrite(["desktop-agent-config", "policy-set-cap", name, value]);
     }
 
     Process {
@@ -170,15 +165,46 @@ Panel {
         }
     }
 
-    // Re-reads after a write rather than assuming it took: the setter can
-    // refuse (unreadable policy, a hand-edit mid-flight), and a switch that
-    // slides over regardless would be lying about the file.
+    // One writer, fed by a queue.
+    //
+    // NOT a Process per call site, and not a shared Process each setter writes
+    // into directly: a Quickshell Process runs one command at a time, and
+    // assigning `command` while it is still running drops that call with no
+    // error anywhere. Two quick clicks in the capability table would have lost
+    // the second one -- a settings UI where a click sometimes does nothing.
+    property var writeQueue: []
+
     Process {
-        id: policyWriteProc
+        id: policyWriter
         onExited: {
-            policyMasterProc.running = true;
-            yoloAllowedProc.running = true;
+            root.pumpWrites();
+            // Re-read only once the burst has drained, and re-read rather than
+            // assume: a setter can refuse (unreadable policy, a hand-edit
+            // mid-flight), and a control that moves anyway is lying about the
+            // file it claims to show.
+            if (root.writeQueue.length === 0 && !policyWriter.running) {
+                policyMasterProc.running = true;
+                yoloAllowedProc.running = true;
+                capsProc.running = true;
+            }
         }
+    }
+
+    function queueWrite(argv) {
+        var q = root.writeQueue.slice();
+        q.push(argv);
+        root.writeQueue = q;
+        root.pumpWrites();
+    }
+
+    function pumpWrites() {
+        if (policyWriter.running || root.writeQueue.length === 0)
+            return;
+        var q = root.writeQueue.slice();
+        var next = q.shift();
+        root.writeQueue = q;
+        policyWriter.command = next;
+        policyWriter.running = true;
     }
 
     // Writing the policy from the panel is only safe because the agent cannot
@@ -187,8 +213,7 @@ Panel {
     // Before both of those, this switch had to live in a file the agent had no
     // reason to touch -- protection by inconvenience, paid for by every user.
     function setPolicyFlag(which, on) {
-        policyWriteProc.command = ["desktop-agent-config", which === "yolo" ? "policy-set-yolo" : "policy-set-enabled", on ? "true" : "false"];
-        policyWriteProc.running = true;
+        root.queueWrite(["desktop-agent-config", which === "yolo" ? "policy-set-yolo" : "policy-set-enabled", on ? "true" : "false"]);
     }
 
     Process {
