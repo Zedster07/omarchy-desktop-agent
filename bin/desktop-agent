@@ -163,6 +163,12 @@ Add to ~/.config/hypr/bindings.lua:
     o.bind("SUPER + F1", "Command prompt",
            "omarchy-shell io.github.zedster07.desktop-agent prompt")
 
+These lines are yours once you paste them: nothing here writes to that file,
+and nothing removes them later. If you ever uninstall this plugin, delete them
+too -- the unbind lines keep working after the plugin is gone, so F9 would stay
+dead and Omarchy's own dictation would not come back. `desktop-agent uninstall`
+prints them with line numbers when the time comes.
+
 Optional, in ~/.config/hypr/looknfeel.lua, for blur behind the overlays:
 
     hl.config({
@@ -231,6 +237,25 @@ case "${1:-doctor}" in
     for u in desktop-agent-voice desktop-agent-stt; do
       systemctl --user disable --now "$u.service" >/dev/null 2>&1 && ok "$u stopped" || true
     done
+    # The keybindings are the one thing that leaves the machine WORSE than it
+    # was found. Everything else this plugin adds simply stops; the unbind
+    # lines keep working after the plugin is gone, so F9 does nothing and the
+    # dictation the OS shipped with stays dead. Silence here would look like
+    # Omarchy broke.
+    if grep -q 'hl.unbind("F9")' "$HOME/.config/hypr/bindings.lua" 2>/dev/null; then
+      echo
+      bold "Your keybindings still point at this plugin"
+      echo "  ~/.config/hypr/bindings.lua contains lines this plugin asked you to add."
+      echo "  Left alone, F9 stays unbound and Omarchy's own dictation will not come back."
+      echo
+      echo "  Delete these from that file:"
+      grep -n 'desktop-agent-listen\|desktop-agent prompt\|hl.unbind("F9")\|hl.unbind("SUPER + CTRL + X")' \
+        "$HOME/.config/hypr/bindings.lua" 2>/dev/null | sed 's/^/    /'
+      echo
+      echo "  Then reload:  hyprctl reload"
+      echo "  Voxtype's F9 and SUPER+CTRL+X come back on their own once the unbinds are gone."
+    fi
+
     bold "State kept, in case this is a reinstall"
     echo "  policy:   $HOME/.config/desktop-agent/policy.jsonc"
     echo "  settings: $HOME/.config/desktop-agent/settings.json"
