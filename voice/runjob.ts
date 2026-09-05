@@ -10,7 +10,7 @@
 // is worth keeping it that simple rather than routing it through machinery
 // built for something harder.
 
-import { readFileSync, unlinkSync } from "node:fs"
+import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { handOff } from "./agent.ts"
 import { remember } from "./history.ts"
 import type { Job } from "./schedule.ts"
@@ -61,6 +61,21 @@ const out = await handOff(`${job.text}\n\n(This is a scheduled job. Nobody is wa
 })
 
 remember(`[scheduled] ${job.text}`, out.ok ? out.summary : `failed: ${out.summary}`, "agent")
+
+// The report matters more here than for an interactive run, not less: nobody
+// watched this happen, so the written account is the only account. It was
+// being skipped because report-writing lived in the voice daemon, which a
+// timer does not go through.
+if (out.report.trim()) {
+  try {
+    const dir = `${HOME}/.local/state/desktop-agent/runs`
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-").slice(0, 19)
+    const body = `> [scheduled ${job.recurrent ? "repeating" : "one-off"}] ${job.text}\n\n${out.report.trim()}\n`
+    mkdirSync(dir, { recursive: true })
+    writeFileSync(`${dir}/${stamp}.md`, body)
+    writeFileSync(`${HOME}/.local/state/desktop-agent/last-run.md`, body)
+  } catch {}
+}
 
 // Told about, either way. A scheduled task that succeeds silently is one you
 // stop trusting, and one that fails silently is worse.

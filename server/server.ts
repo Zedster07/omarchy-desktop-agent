@@ -1245,6 +1245,11 @@ async function gate(
     // wait. The person will read the result in the morning; a job that hangs
     // until its idle watchdog kills it tells them nothing.
     if (!JOB_CAPS.has(cap)) {
+      // Audited before throwing. A refusal during a scheduled run is the one
+      // nobody saw happen, so it is the one most worth being able to look up:
+      // "why did the 7am job not do the thing" has no other answer.
+      await audit((await loadPolicy()).policy,
+        `job ${JOB_ID}: REFUSED ${toolName} (${cap}) — not in its declared capabilities`)
       throw new Refused(
         `REFUSED: this scheduled job may only ${[...JOB_CAPS].join(", ") || "(nothing)"}, and "${cap}" is not on that list.\n` +
         `  Nobody is watching, so this cannot be approved now. Finish what you can and say in your report\n` +
