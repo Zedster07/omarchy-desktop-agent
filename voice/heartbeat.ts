@@ -21,25 +21,46 @@
 import { mkdirSync, statSync, utimesSync, writeFileSync } from "node:fs"
 
 const RUNTIME = process.env.XDG_RUNTIME_DIR || `/run/user/${process.getuid?.() ?? 1000}`
-export const BEAT_PATH = `${RUNTIME}/desktop-agent/activity`
+
+/**
+ * Where THIS process reports its activity.
+ *
+ * One shared file was right while one agent ran at a time. With delegation it
+ * would be actively harmful: five subagents beating into one path means the
+ * busiest one keeps the other four alive, and a subagent wedged for an hour
+ * looks healthy for as long as any sibling is working. Idle detection would
+ * quietly stop detecting anything.
+ *
+ * Set per subagent at spawn, so a process beats where its environment says and
+ * is judged on its own activity alone.
+ */
+export const BEAT_PATH = process.env.DESKTOP_AGENT_BEAT?.trim()
+  || `${RUNTIME}/desktop-agent/activity`
 
 /** Mark the agent as busy, now. Cheap enough to call on a timer. */
-export function beat(): void {
+export function beat(file: string = BEAT_PATH): void {
   try {
-    mkdirSync(BEAT_PATH.slice(0, BEAT_PATH.lastIndexOf("/")), { recursive: true })
+    mkdirSync(file.slice(0, file.lastIndexOf("/")), { recursive: true })
     // utimes on an existing file avoids rewriting contents every few seconds;
     // the write is the fallback for the first beat.
-    try { utimesSync(BEAT_PATH, new Date(), new Date()) }
-    catch { writeFileSync(BEAT_PATH, "") }
+    try { utimesSync(file, new Date(), new Date()) }
+    catch { writeFileSync(file, "") }
   } catch {}
 }
 
-/** Milliseconds since the last beat, or Infinity if there has never been one. */
-export function sinceBeat(): number {
-  try { return Date.now() - statSync(BEAT_PATH).mtimeMs } catch { return Infinity }
+/**
+ * Milliseconds since the last beat, or Infinity if there has never been one.
+ *
+ * Takes a path so the daemon can watch a subagent it spawned rather than its
+ * own: the watcher and the watched are different processes with different
+ * environments, and defaulting to "mine" would have each subagent's watchdog
+ * reading the master's file.
+ */
+export function sinceBeat(file: string = BEAT_PATH): number {
+  try { return Date.now() - statSync(file).mtimeMs } catch { return Infinity }
 }
 
 /** Forget any previous run's beats, so a new run starts from a clean slate. */
-export function resetBeat(): void {
-  beat()
+export function resetBeat(file: string = BEAT_PATH): void {
+  beat(file)
 }

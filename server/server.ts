@@ -52,6 +52,9 @@ const policyPath = () =>
 const AUDIT_PATH = path.join(os.homedir(), ".local", "share", "desktop-agent", "desktop.log")
 import { onWorkspace, isLaunch, confinementWorkspace, ensureAgentTerminal, sendToAgentTerminal, abortAgentTerminal } from "../voice/workspace.ts"
 import { beat } from "../voice/heartbeat.ts"
+import { runPool, concurrencyLimit } from "../voice/pool.ts"
+import { runSubagent } from "../voice/subagent.ts"
+import { settingStr } from "../voice/settings.ts"
 
 // Per-user scratch. /tmp/desktop-agent is created by whoever gets there first
 // and owned by them, so on a shared machine the second user hits EACCES on a
@@ -1619,6 +1622,60 @@ function describeCall(tool: string, args: any): string {
 }
 
 const server = new McpServer({ name: "desktop", version: "2.0.0" })
+
+// ---------------------------------------------------------------------------
+server.registerTool(
+  "desktop_delegate",
+  {
+    description:
+      "Run several INDEPENDENT pieces of work in parallel, each in its own agent with its own terminal. " +
+      "Use it when a job splits cleanly into pieces that do not need each other's results -- five papers to read, " +
+      "ten directories to inspect -- and you will combine the answers yourself afterwards. " +
+      "Each task must be self-contained: subagents cannot see each other, cannot ask you anything, and return text only. " +
+      "They have no browser and cannot delegate further; if a piece needs either, they say so and you do it. " +
+      "Do NOT use this for work that must happen in order, or for a single task split into steps.",
+    inputSchema: {
+      tasks: z.array(z.string().min(1)).min(1).max(20)
+        .describe("One self-contained instruction per subagent, in the order you want the results."),
+    },
+  },
+  guard("desktop_delegate", async (args: { tasks: string[] }) => {
+    const { policy, error } = await loadPolicy()
+    if (!policy.enabled) {
+      throw new Refused('REFUSED: policy "enabled" is false — desktop control is switched off')
+    }
+    if (error) throw new Refused(`REFUSED: ${error}`)
+
+    const limit = concurrencyLimit(Number(await settingStr("agent.maxSubagents", "4")))
+    const idleMs = Number(await settingStr("agent.idleSec", "120")) * 1000
+    const maxMs = Number(await settingStr("agent.maxRunSec", "3600")) * 1000
+
+    await audit(policy, `delegate ${args.tasks.length} task(s), ${limit} at a time`)
+
+    const results = await runPool(args.tasks, limit, (task, i) =>
+      runSubagent(task, i, { workspace: CONFINE_WS || 10, idleMs, maxMs }))
+
+    // Reported per task, in the order they were given, with failures named.
+    // A join that has to work out which answer belongs to which task will
+    // eventually pair the wrong two, and a batch that hides its failures is
+    // worse than one that fails outright: the master would synthesise three
+    // findings and present them as five.
+    const out: string[] = []
+    let failed = 0
+    results.forEach((r, i) => {
+      const v = r.ok ? r.value : null
+      if (!v || !v.ok) failed++
+      out.push(`## task ${i + 1}${v ? ` (${v.name})` : ""} — ${v?.ok ? "done" : "FAILED"}`)
+      out.push(v ? (v.ok ? v.report : `${v.summary}\n${v.report}`.trim())
+                 : (r as { ok: false; error: string }).error)
+      out.push("")
+    })
+    out.unshift(failed
+      ? `${results.length - failed} of ${results.length} finished, ${failed} failed. Use what succeeded and say plainly what is missing.`
+      : `All ${results.length} finished.`)
+    return say(out.join("\n"))
+  }),
+)
 
 // ---------------------------------------------------------------------------
 server.registerTool(

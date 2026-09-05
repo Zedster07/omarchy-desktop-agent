@@ -2,7 +2,7 @@ import type { AgentRunner, PrepareOptions, PreparedExecution } from "./types.ts"
 import { taskPrompt } from "./prompt.ts"
 import { mkdirSync, writeFileSync } from "node:fs"
 
-const DENIED_TOOLS = [
+export const DENIED_TOOLS = [
   "Bash", "Read", "Write", "Edit", "NotebookEdit", "Glob", "Grep",
   "WebFetch", "WebSearch", "Agent", "Task", "Skill", "Workflow",
   "CronCreate", "CronDelete", "CronList", "Monitor", "SendMessage",
