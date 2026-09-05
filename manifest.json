@@ -1,11 +1,11 @@
 {
   "schemaVersion": 1,
   "id": "io.github.zedster07.desktop-agent",
-  "name": "Desktop Agent",
+  "name": "Omatron",
   "version": "3.0.0",
   "author": "Zedster07",
   "license": "MIT",
-  "description": "Speak to your desktop and have it act, on a leash you own. Adds spoken commands on top of Omarchy's built-in Voxtype dictation: a phrase is matched against a declared intent registry, gated by a default-deny policy with an approval overlay and an audit trail. Other plugins can register their own voice commands.",
+  "description": "Speak or type, and your desktop acts \u2014 on a leash you own. Omatron replaces Omarchy's dictation with its own speech stack, then escalates through four tiers: a declared intent registry answers known phrases instantly and offline; an AI writes new commands for the rest, shown before they run; and an agent that can see and click the screen takes what commands cannot express. Every action passes one default-deny policy with an approval overlay, an audit line and a kill switch. It can delegate independent work to parallel subagents, schedule reminders and recurring tasks, and confine any agent to the desktop tools alone.",
   "kinds": [
     "service",
     "panel",

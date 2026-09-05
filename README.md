@@ -1,15 +1,25 @@
-# Desktop Agent
+# Omatron
 
 **Say what you want, and your desktop does it — on a leash you own.**
 
-Omarchy already turns your voice into text: Voxtype ships with the OS, bound to
-`F9`. This does the other half. Press `F10`, say *"workspace three"* or
-*"lock screen"*, and it **happens** — matched against a declared list of
-actions, gated by a default-deny policy, with an approval prompt for anything
-irreversible and an audit line for everything that runs.
+Press `F10` and say *"workspace three"*, *"close discord"*, or *"find me a
+4-star hotel near the airport under 15,000 dinars"*. The first is answered in
+under a millisecond from a declared list. The second resolves a window by name.
+The third opens a browser, reads results, compares them and writes you a note.
 
-Nothing to install for the voice part. No engine, no model download, no API
-key, no account. If you are running Omarchy, the speech half is already there.
+Same sentence, three completely different amounts of machinery — chosen by what
+the sentence needs, not by what it costs.
+
+Everything that touches your machine passes one default-deny policy: an approval
+overlay for anything irreversible, an audit line for everything that runs, and a
+kill switch that is a single line in a file you own.
+
+> **Omatron replaces Omarchy's dictation.** It ships its own speech stack
+> (faster-whisper locally, or Groq remotely) and the setup instructions unbind
+> Voxtype's `F9` and `SUPER+CTRL+X`, because two engines on one key would both
+> record. That handover is printed for you to paste, never applied behind your
+> back, and `desktop-agent uninstall` prints the exact lines to remove if you
+> ever want Voxtype back.
 
 ## Two front-ends, one gate
 
@@ -305,6 +315,93 @@ context.modules = [
 Then make `mic_agc` your default source. Leave the raw mic with headroom
 (~30%) so AGC has something to work with rather than a clipped signal.
 
+## Parallel work
+
+Some jobs split into pieces that do not need each other's results — five papers
+to read, ten folders to inspect. The agent hands those to `desktop_delegate`,
+which runs them at the same time and gives the answers back in order for the
+agent to join.
+
+Each subagent is its own process with its own everything: scratch directory,
+tmux window, MCP server, policy identity, idle watchdog. Two subagents share no
+mutable path, so one cannot read another's output by accident.
+
+They are deliberately handless. A subagent gets `run`, `screenshot`, `windows`,
+`write`, `edit` and `policy` — headless work. It has no browser, no mouse, no
+keyboard, no window or workspace control, and it cannot delegate or schedule.
+Not because those are dangerous in themselves, but because there is **one**
+cursor and **one** keyboard focus and several of them: two subagents typing at
+once do not each get a keyboard, they interleave keystrokes into whatever
+happened to be focused. Anything exclusive stays with the master.
+
+Those tools are not merely refused to a subagent — they are never offered. An
+agent that can see a browser tool it may not use goes looking for another way
+to browse.
+
+Four at a time by default (`agent.maxSubagents`, hard limit 8). More tasks than
+that are queued, not refused. Stopping the master kills the whole tree.
+
+## Confinement
+
+The policy engine only sees calls that reach the desktop MCP server. An agent
+with its own shell can run `hyprctl` directly and the policy never knows — so
+the question is not whether an agent is trustworthy, but whether it can reach
+the compositor at all.
+
+**Claude Code** is reduced to the desktop tools by a deny list: no Bash, no
+file access, no network of its own. `desktop-agent agent-check` asks it to
+enumerate its own tools and fails if anything outside `mcp__desktop__*` comes
+back.
+
+**Everything else** — Gemini, Codex, OpenCode — keeps its own shell, so it runs
+inside a `bwrap` sandbox with the compositor sockets removed and the filesystem
+read-only. The MCP server stays outside, holding those sockets, reached through
+a single bound socket. The shell survives; its reach does not:
+
+```
+inside the sandbox:   hyprctl activewindow → HYPRLAND_INSTANCE_SIGNATURE not set!
+through the socket:   desktop_windows      → 3 windows, 3 withheld by policy
+```
+
+Needs `bwrap` and `socat`. Without them those runners are refused rather than
+run unprotected.
+
+## Reminders and schedules
+
+Ask for something later, or repeatedly:
+
+```
+"remind me at 3pm tomorrow to renew the domain"
+"every weekday at 8:30, check my disk space and warn me if root is over 85%"
+```
+
+The first is a **reminder**: a notification at a time, running no agent at all.
+Most of what people want from scheduling is this, and it cannot fail in the
+night because there is nothing in it to fail.
+
+The second is a **scheduled task**: a real agent run with nobody watching. That
+inverts the assumption everything else here rests on, so it works differently.
+The job declares what it will need when it is created, you approve that list
+once, and at 3am the declared capabilities are treated as already answered —
+while anything outside them is **refused**, not queued for a question nobody is
+awake to hear. The list is a ceiling, not a licence: a task cannot grow new
+powers by drifting into them.
+
+Irreversible commands are never pre-approved, whatever a job declared. At 3am
+there is nobody to catch a mistaken `rm`.
+
+One-off jobs remove themselves once fired. Recurring ones expire after 90 days
+unless renewed, so a job nobody remembers creating cannot still be running next
+year. Everything is listed in the panel and by `desktop-agent jobs`, cancellable
+by name, and a job whose plugin has been deleted removes itself on its next
+firing.
+
+```
+desktop-agent jobs                    # everything scheduled
+desktop-agent job-cancel <id|all>     # stop one, or all
+desktop-agent remind "09:00" "..."    # a bare time repeats daily
+```
+
 ## When a command is misheard
 
 Matching is strict on purpose, so the usual failure is *"No command matched"* —
@@ -363,9 +460,24 @@ this identically, gradients included.
 
 ## Requirements
 
-`pw-record` (pipewire), `wtype`, `socat`, `wl-clipboard`, `python3`, `bun`.
+**For voice:** `pw-record` (pipewire), `wtype`, `socat`, `wl-clipboard`,
+`python3`, `bun`, and a free Groq API key — or local transcription instead, see
+below.
 
-Nothing else by default. Choosing local transcription later creates a
+**For tiers 3 and 4** — anything the intent registry does not already know —
+an agent CLI: **Claude Code** is the only one that can be reduced to the
+desktop tools without a sandbox, and the only one subagents run on. Gemini,
+Codex and OpenCode work for single runs if `bwrap` and `socat` are installed;
+without those they are refused rather than run unprotected.
+
+**For watching the agent work:** `tmux`, which puts its commands in a terminal
+you can read instead of a pipe you cannot. Without it they still run, silently.
+
+**For scheduling:** `systemd --user` timers, which Omarchy already has.
+
+Tiers 1 and 2 need none of the agent parts.
+
+Choosing local transcription later creates a
 virtualenv under `~/.local/share/desktop-agent/` and installs faster-whisper
 into it (432 MB plus the model) — but only after the panel has shown you the
 size and you have said yes. Nothing is installed system-wide.
