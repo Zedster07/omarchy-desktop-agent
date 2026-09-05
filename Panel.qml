@@ -427,7 +427,11 @@ Panel {
             Rectangle {
                 anchors.fill: parent
                     radius: Style.cornerRadius
-                color: Theme.cardBackground
+                // Alpha stripped. Color.popups.background is composed WITH an alpha
+                // channel, so painting with it inherits whatever transparency the theme
+                // gave popups -- and a backdrop that is 90% opaque still lets a bright
+                // terminal ghost through. Same hue, no transparency.
+                color: Qt.rgba(Theme.cardBackground.r, Theme.cardBackground.g, Theme.cardBackground.b, 1)
             }
             Rectangle {
                 anchors.fill: parent
