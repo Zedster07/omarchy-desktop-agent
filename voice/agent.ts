@@ -15,6 +15,7 @@
 import { settingStr } from "./settings.ts"
 import { resetBeat, sinceBeat } from "./heartbeat.ts"
 import { killTree } from "./killtree.ts"
+import { appendFileSync } from "node:fs"
 import { getRunner, listAvailableRunners, unconfinedRunners, taskPrompt } from "./runners/index.ts"
 
 export { taskPrompt }
@@ -133,6 +134,25 @@ export async function handOff(
   // shell.
   if (!runner.confined) {
     const allow = (await settingStr("agent.allowUnconfined", "false")) === "true"
+    if (allow) {
+      // Say so, in the audit log, at the time.
+      //
+      // The policy engine is identical whichever runner drives -- every
+      // desktop_* call goes through the same gate. What changes is whether the
+      // agent can avoid those tools, and an unconfined one can: it may run
+      // hyprctl through its own shell, with no approval, no audit line and no
+      // kill switch, because the server never sees it.
+      //
+      // Without this line the log of such a run is indistinguishable from a
+      // fully policed one -- same entries, minus whatever happened off-road.
+      // A record that cannot tell you it is incomplete is worse than a gap you
+      // can see.
+      try {
+        appendFileSync(`${HOME}/.local/share/desktop-agent/desktop.log`,
+          `${new Date().toISOString()} UNCONFINED RUN via ${runner.name} — ` +
+          `only calls it chose to make through the desktop tools appear below\n`)
+      } catch {}
+    }
     if (!allow) {
       return {
         ok: false,
