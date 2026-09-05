@@ -1,6 +1,6 @@
 [Unit]
 Description=Desktop Agent voice daemon
-Documentation=https://github.com/Zedster07/omarchy-desktop-agent
+Documentation=https://github.com/Zedster07/omatron
 After=graphical-session.target desktop-agent-stt.service
 Wants=desktop-agent-stt.service
 PartOf=graphical-session.target

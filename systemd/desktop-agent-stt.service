@@ -1,6 +1,6 @@
 [Unit]
 Description=Desktop Agent speech-to-text
-Documentation=https://github.com/Zedster07/omarchy-desktop-agent
+Documentation=https://github.com/Zedster07/omatron
 After=graphical-session.target
 PartOf=graphical-session.target
 
