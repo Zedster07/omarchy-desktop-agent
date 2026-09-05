@@ -1004,6 +1004,14 @@ async function backupFile(policy: Policy, abs: string): Promise<string | undefin
  * file -- tee, dd, cp, mv, install, truncate, sed -- is in here, so a yolo
  * session cannot quietly extend its own yolo session.
  */
+/**
+ * This plugin's own controls. Never runnable through desktop_run, whatever the
+ * policy says -- see the refusal in desktop_run for why this is not a policy
+ * rule. "desktop-agent remind" is unaffected: the voice route spawns it
+ * directly and never passes through this tool.
+ */
+const SELF_CONTROL = new Set(["desktop-agent", "desktop-agent-config", "desktop-yolo", "desktop-agent-arm"])
+
 const NEVER_YOLO: string[] = [
   // Destroy or overwrite what is already on disk.
   "rm", "rmdir", "unlink", "shred", "srm", "wipe", "trash", "trash-put", "gio",
@@ -1028,6 +1036,9 @@ const NEVER_YOLO: string[] = [
   // Outlive the lease -- including the lease's own control, so a yolo session
   // can never buy itself more yolo.
   "crontab", "at", "batch", "desktop-yolo",
+  // This plugin's own controls. desktop_run refuses these outright; they are
+  // here too so no other path can auto-approve one under a lease.
+  "desktop-agent", "desktop-agent-*",
   // The omarchy router reaches shutdown, factory reset, package installs and
   // the shell's own IPC through arguments this list cannot see. It stays on the
   // overlay under a lease so the subcommand is read by a human.
@@ -2785,6 +2796,31 @@ server.registerTool(
     }
 
     const base = path.basename(cmd)
+
+    // This plugin's own controls are not runnable, at any policy setting.
+    //
+    // Refused here rather than through run.commands because run.commands is a
+    // rule in the very file these commands rewrite: a policy carrying
+    // "*": "allow", or one written before this rule existed, re-opens the loop
+    // completely. Same reasoning as the geometry check on desktop_mouse, and
+    // the same boundary -- the agent must not operate the person's controls
+    // over it -- reached through a different door.
+    //
+    // The door I had missed. The switches moved into the panel on the argument
+    // that clicks onto our surfaces are refused and desktop-agent-config is
+    // refused from speech; desktop_run was a third route, and under a lease it
+    // was auto-approved silently, so "policy-set-yolo true" bought the agent a
+    // permanent one.
+    if (SELF_CONTROL.has(base)) {
+      throw new Refused(
+        `REFUSED: "${base}" is this plugin's own control command.\n` +
+          "  It changes the policy, the lease and the capabilities that govern you,\n" +
+          "  so it is not something you may run -- under a lease, a scheduled job or\n" +
+          "  otherwise. The person changes these from the panel's Policy tab.\n" +
+          "  To schedule something, use desktop_schedule.",
+      )
+    }
+
     const hit = evaluate(policy.run.commands, [cmd, base])
     const ag = agentAction(policy, IDENTITY, "run")
     const capAction = coerceAction(policy.capabilities.run, "ask")

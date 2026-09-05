@@ -453,6 +453,14 @@
       "qs": "deny", // would drive the approval overlay itself
       "quickshell": "deny",
       "desktop-yolo": "deny", // would let the agent grant itself a free pass
+      // The panel's own controls, by another name. These rewrite this file --
+      // the policy, the capability table, the lease switch -- so an agent that
+      // can run them is not governed by any of it. desktop_run refuses them in
+      // code as well, because a rule living in the file they rewrite is not a
+      // boundary; these are here so desktop_policy can explain the refusal.
+      "desktop-agent": "deny",
+      "desktop-agent-config": "deny",
+      "desktop-agent-arm": "deny",
       // (omarchy-* is already denied as a family above; these stay for the
       // record of why -- they are desktop_launch without the gate.)
       "omarchy-launch-editor": "deny",

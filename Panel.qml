@@ -174,9 +174,34 @@ Panel {
     // the second one -- a settings UI where a click sometimes does nothing.
     property var writeQueue: []
 
+    // Why the last write failed, empty when it did not.
+    //
+    // A failed write used to be silent. The control snapped back to the file's
+    // value on the re-read, so nothing on screen was false -- but a switch that
+    // flicks back with no explanation reads as a broken panel, and the actual
+    // reasons (an unparseable policy, a lock held by something else) are ones
+    // the person can act on once told.
+    property string writeError: ""
+
     Process {
         id: policyWriter
-        onExited: {
+        // The setters print their reason on stdout and exit non-zero, so the
+        // last line is the message worth showing.
+        stdout: SplitParser {
+            onRead: function (line) {
+                root.lastWriteLine = String(line).trim();
+            }
+        }
+        stderr: SplitParser {
+            onRead: function (line) {
+                root.lastWriteLine = String(line).trim();
+            }
+        }
+        onExited: function (exitCode) {
+            if (exitCode !== 0)
+                root.writeError = root.lastWriteLine !== "" ? root.lastWriteLine : "the setting could not be written (exit " + exitCode + ")";
+            root.lastWriteLine = "";
+
             root.pumpWrites();
             // Re-read only once the burst has drained, and re-read rather than
             // assume: a setter can refuse (unreadable policy, a hand-edit
@@ -189,8 +214,10 @@ Panel {
             }
         }
     }
+    property string lastWriteLine: ""
 
     function queueWrite(argv) {
+        root.writeError = "";
         var q = root.writeQueue.slice();
         q.push(argv);
         root.writeQueue = q;
@@ -1197,6 +1224,32 @@ Panel {
                         width: parent.width
                         spacing: Style.spacing.xxl
                         visible: root.tab === 3
+
+                        // Sits above the controls, not beside the one that failed:
+                        // a burst can fail on any of fifteen of them, and the
+                        // person needs the reason more than the row number.
+                        Rectangle {
+                            visible: root.writeError !== ""
+                            width: parent.width
+                            height: writeErrText.implicitHeight + Style.spacing.xl * 2
+                            radius: Style.cornerRadius
+                            color: Util.alpha(Theme.danger, 0.12)
+                            border.width: 1
+                            border.color: Util.alpha(Theme.danger, 0.5)
+
+                            Text {
+                                id: writeErrText
+                                anchors.left: parent.left
+                                anchors.right: parent.right
+                                anchors.margins: Style.spacing.xl
+                                anchors.verticalCenter: parent.verticalCenter
+                                wrapMode: Text.WordWrap
+                                text: "Not saved — " + root.writeError
+                                color: Theme.danger
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                            }
+                        }
 
                         // The two switches that used to live only in policy.jsonc.
                         //
