@@ -357,8 +357,12 @@ Panel {
         anchors.margins: -panel.padding
         radius: Style.cornerRadius
         // The theme's own surface, so a light theme gets a light panel.
+        // Fully opaque. 0.97 was a deliberate hint of depth, and at that value
+        // a bright terminal behind still reads through well enough to compete
+        // with the text -- which is the entire complaint this was meant to fix.
+        // Depth can come from the border and the shadow; the ground has to be
+        // ground.
         color: Theme.cardBackground
-        opacity: 0.97
       }
       Rectangle {
         anchors.fill: parent
