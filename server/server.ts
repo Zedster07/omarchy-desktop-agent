@@ -1255,9 +1255,21 @@ async function gate(
         `  Nobody is watching, so this cannot be approved now. Finish what you can and say in your report\n` +
         `  that the job needs "${cap}" — its capabilities can be changed by recreating it.`)
     }
-    // On the list, so it was approved when the job was created. The floor
-    // still holds: an irreversible command is never pre-approved, because at
-    // 3am there is nobody to catch a mistaken one and no way to undo it.
+    // The floor, said plainly. An irreversible command is never pre-approved,
+    // and previously it fell through to the approval overlay -- which cannot
+    // answer at 3am, so the agent was told "the Omarchy bar plugin is not
+    // loaded". That reads as a broken UI and invites retrying, when the truth
+    // is a rule it will never get past.
+    if (d.action === "ask" && noYolo) {
+      await audit((await loadPolicy()).policy,
+        `job ${JOB_ID}: REFUSED ${toolName} — ${noYolo}, and unattended runs cannot be asked`)
+      throw new Refused(
+        `REFUSED: ${noYolo}. A scheduled job runs with nobody watching, so this can never be\n` +
+        `  approved at the time. It is not a fault and retrying will not help — say in your report\n` +
+        `  that this step needs a person.`)
+    }
+
+    // On the list, so it was approved when the job was created.
     if (d.action === "ask" && !noYolo) {
       await audit((await loadPolicy()).policy, `job ${JOB_ID}: ${toolName} (${cap}) -- pre-approved when the job was created`)
       return
@@ -1816,7 +1828,7 @@ server.registerTool(
       kind: z.enum(["reminder", "task"]).describe("reminder = a notification; task = an agent run"),
       text: z.string().min(1).describe("What to say (reminder) or what to do (task)."),
       when: z.string().min(1).describe(
-        "A systemd calendar time: 'tomorrow 09:00', '2026-09-06 14:30', 'Mon..Fri 08:30', '*-*-* 07:00:00'."),
+        "When to fire. Either a systemd calendar spec -- 'Mon..Fri 08:30', '09:00' (every day), '*-*-* 07:00:00', '2026-09-06 14:30' -- or a plain 'tomorrow 09:00' / 'today 18:30', which is converted. A bare time repeats DAILY; give a date for once."),
       recurrent: z.boolean().describe("true repeats on that schedule; false fires once and removes itself."),
       capabilities: z.array(z.enum(ALL_CAPS as unknown as [string, ...string[]])).optional()
         .describe("For kind='task': everything it may do. Ask for the least that will work; it cannot be widened at run time."),

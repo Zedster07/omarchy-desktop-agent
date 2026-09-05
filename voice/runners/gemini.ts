@@ -31,7 +31,7 @@ export class GeminiRunner implements AgentRunner {
               desktop: {
                 command: opts.mcp.command,
                 args: opts.mcp.args,
-                env: { DESKTOP_AGENT_IDENTITY: "gemini", DESKTOP_AGENT_WORKSPACE: String(opts.workspace) },
+                env: { ...opts.mcpEnv },
               },
             },
           },

@@ -30,10 +30,11 @@ export class CodexRunner implements AgentRunner {
         `mcp_servers.desktop.command="${opts.mcp.command}"`,
         "-c",
         `mcp_servers.desktop.args=${JSON.stringify(opts.mcp.args)}`,
-        "-c",
-        'mcp_servers.desktop.env.DESKTOP_AGENT_IDENTITY="codex"',
-        "-c",
-        `mcp_servers.desktop.env.DESKTOP_AGENT_WORKSPACE="${opts.workspace}"`,
+        // One -c per variable, generated from the same object every other
+        // runner spreads. Hand-listing them here is what let the capability
+        // ceiling go missing on this runner while Claude had it.
+        ...Object.entries(opts.mcpEnv).flatMap(([k, v]) =>
+          ["-c", `mcp_servers.desktop.env.${k}="${String(v).replace(/"/g, '\\"')}"`]),
         // Its own help names the condition exactly: "EXTREMELY DANGEROUS.
         // Intended solely for running in environments that are externally
         // sandboxed." Inside bwrap, with no compositor sockets and a read-only

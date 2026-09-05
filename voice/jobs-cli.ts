@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 // Listing and cancelling schedules from a terminal.
 
-import { listJobs, cancelJob, pruneJobs, nextRuns, createJob } from "./schedule.ts"
+import { listJobs, cancelJob, pruneJobs, nextRuns, createJob, normaliseWhen } from "./schedule.ts"
 
 const cmd = process.argv[2] ?? "list"
 
@@ -58,7 +58,17 @@ if (cmd === "remind") {
   const when = process.argv[3]
   const text = process.argv.slice(4).join(" ")
   if (!when || !text) { console.error('usage: jobs-cli.ts remind "<when>" "<text>"'); process.exit(2) }
-  const r = createJob({ kind: "reminder", text, when, recurrent: /^(mon|tue|wed|thu|fri|sat|sun|daily|weekly|\*)/i.test(when) })
+  // Ask systemd whether it repeats, rather than guessing from the spelling.
+  //
+  // A regex on the first character got "Mon..Fri" right and "09:00" wrong --
+  // and "09:00" means *-*-* 09:00:00, every day. It was stored as a one-off,
+  // so it deleted its own record after the first morning and never fired
+  // again, which is the sort of failure nobody reports because it looks like
+  // they must have set it up wrong.
+  const it = Bun.spawnSync(["systemd-analyze", "calendar", "--iterations=2", normaliseWhen(when)])
+  const fires = (new TextDecoder().decode(it.stdout).match(/Next elapse|Iter/g) ?? []).length
+  const repeats = fires > 1 || /Next elapse[\s\S]*Next elapse/.test(new TextDecoder().decode(it.stdout))
+  const r = createJob({ kind: "reminder", text, when, recurrent: repeats })
   if (!r.ok) { console.error(`  ${r.error}`); process.exit(1) }
   console.log(`  reminder set for ${when} (${r.job!.id})`)
   process.exit(0)

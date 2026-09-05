@@ -120,6 +120,14 @@ export async function runSubagent(
         desktop: {
           type: "stdio", command: bun, args: ["run", server],
           env: {
+            // A subagent inherits the job ceiling too: a delegated piece of a
+            // scheduled task is still running unattended.
+            ...(process.env.DESKTOP_AGENT_JOB_CAPS !== undefined
+              ? {
+                  DESKTOP_AGENT_JOB_CAPS: process.env.DESKTOP_AGENT_JOB_CAPS,
+                  DESKTOP_AGENT_JOB: process.env.DESKTOP_AGENT_JOB ?? "",
+                }
+              : {}),
             DESKTOP_AGENT_IDENTITY: name,
             // The server refuses the browser and delegation to anything whose
             // role is not master. A subagent cannot unset this: it never sees

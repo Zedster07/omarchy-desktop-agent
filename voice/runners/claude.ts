@@ -46,19 +46,7 @@ export class ClaudeRunner implements AgentRunner {
                 command: opts.mcp.command,
                 args: opts.mcp.args,
                 env: {
-                  DESKTOP_AGENT_IDENTITY: "claude",
-                  DESKTOP_AGENT_WORKSPACE: String(opts.workspace),
-                  // Written into the config rather than left to inheritance.
-                  // These decide what a scheduled run may do, and "the child
-                  // probably inherits it" is not a basis for a security
-                  // boundary -- if it did not arrive, the job would silently
-                  // run with no ceiling at all.
-                  ...(process.env.DESKTOP_AGENT_JOB_CAPS !== undefined
-                    ? {
-                        DESKTOP_AGENT_JOB_CAPS: process.env.DESKTOP_AGENT_JOB_CAPS,
-                        DESKTOP_AGENT_JOB: process.env.DESKTOP_AGENT_JOB ?? "",
-                      }
-                    : {}),
+                  ...opts.mcpEnv,
                 },
               },
             },

@@ -34,7 +34,7 @@ export class OpenCodeRunner implements AgentRunner {
               desktop: {
                 type: "local",
                 command: [opts.mcp.command, ...opts.mcp.args],
-                environment: { DESKTOP_AGENT_IDENTITY: "opencode", DESKTOP_AGENT_WORKSPACE: String(opts.workspace) },
+                environment: { ...opts.mcpEnv },
                 enabled: true,
               },
             },

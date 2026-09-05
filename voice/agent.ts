@@ -186,13 +186,24 @@ export async function handOff(
 
   // The bridge has to exist before prepare(), because the config prepare()
   // writes has to name it.
-  const bridge = sandboxed
-    ? await startBridge("master", {
-        DESKTOP_AGENT_IDENTITY: runner.id,
-        DESKTOP_AGENT_ROLE: "master",
-        DESKTOP_AGENT_WORKSPACE: String(workspace),
-      })
-    : null
+  // One environment for the desktop server, however it is reached.
+  //
+  // The bridge spawns servers too, so leaving the job's capability ceiling out
+  // of it would mean a sandboxed scheduled run had no ceiling -- the same hole
+  // as a runner that forgets to pass it, arrived at from the other direction.
+  const mcpEnv: Record<string, string> = {
+    DESKTOP_AGENT_IDENTITY: runner.id,
+    DESKTOP_AGENT_ROLE: "master",
+    DESKTOP_AGENT_WORKSPACE: String(workspace),
+    ...(process.env.DESKTOP_AGENT_JOB_CAPS !== undefined
+      ? {
+          DESKTOP_AGENT_JOB_CAPS: process.env.DESKTOP_AGENT_JOB_CAPS,
+          DESKTOP_AGENT_JOB: process.env.DESKTOP_AGENT_JOB ?? "",
+        }
+      : {}),
+  }
+
+  const bridge = sandboxed ? await startBridge("master", mcpEnv) : null
   if (sandboxed && !bridge) {
     return { ok: false, summary: "could not start the sandbox bridge — refusing to run unprotected", report: "" }
   }
@@ -204,6 +215,7 @@ export async function handOff(
     bunPath: bun,
     stateDir: STATE,
     mcp: bridge ? bridgeCommand() : { command: bun, args: ["run", serverScript] },
+    mcpEnv,
     externallySandboxed: sandboxed,
   })
 

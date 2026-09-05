@@ -52,6 +52,33 @@ function id(): string {
   return `${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 4)}`
 }
 
+/**
+ * Turn the way people say times into the grammar systemd timers accept.
+ *
+ * Only the forms that actually come up, and only when they are unambiguous:
+ * anything else is passed through untouched so systemd can reject it with its
+ * own error rather than having this guess.
+ */
+export function normaliseWhen(raw: string): string {
+  const s = raw.trim()
+  const day = (offset: number) => {
+    const d = new Date(Date.now() + offset * 86400_000)
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`
+  }
+  const time = (h: string, m: string, sec?: string) =>
+    `${h.padStart(2, "0")}:${m.padStart(2, "0")}:${(sec ?? "00").padStart(2, "0")}`
+
+  // "tomorrow 09:00" / "tomorrow at 9:00" -> "2026-09-06 09:00:00"
+  let m = s.match(/^(today|tonight|tomorrow)\s+(?:at\s+)?(\d{1,2}):(\d{2})(?::(\d{2}))?$/i)
+  if (m) return `${day(/tomorrow/i.test(m[1]) ? 1 : 0)} ${time(m[2], m[3], m[4])}`
+
+  // "09:00 tomorrow" -- the same thing said the other way round.
+  m = s.match(/^(\d{1,2}):(\d{2})(?::(\d{2}))?\s+(today|tonight|tomorrow)$/i)
+  if (m) return `${day(/tomorrow/i.test(m[4]) ? 1 : 0)} ${time(m[1], m[2], m[3])}`
+
+  return s
+}
+
 export function jobsDir(): string {
   mkdirSync(JOBS, { recursive: true })
   return JOBS
@@ -98,7 +125,7 @@ export interface CreateResult { ok: boolean; job?: Job; error?: string }
 /**
  * Create a job and its timer.
  *
- * `when` is a systemd calendar expression ("tomorrow 09:00", "Mon..Fri 08:30",
+ * `when` is a systemd calendar expression ("Mon..Fri 08:30", "09:00",
  * "*-*-* 07:00:00") for anything recurrent, and an instant for a one-off.
  * systemd parses it, so an invalid expression is rejected here rather than
  * silently never firing -- the failure mode a scheduler must not have.
@@ -109,12 +136,25 @@ export function createJob(
   const jobId = id()
   const unit = `${UNIT_PREFIX}${jobId}`
 
+  // "tomorrow 09:00" is not a calendar expression.
+  //
+  // systemd has two grammars: TIMESTAMPS ("tomorrow 09:00", "in 2 hours") and
+  // CALENDAR specs ("Mon..Fri 08:30", "*-*-* 07:00:00"). Timers take the
+  // second. I documented the first as an example in three places, so an agent
+  // following the instruction exactly would have its job rejected -- the one
+  // way of being wrong that no amount of care by the model can avoid.
+  //
+  // Rather than only correcting the examples, the common natural forms are
+  // translated. People say "tomorrow at nine"; making that work is cheaper
+  // than teaching everyone which grammar they are speaking.
+  const when = normaliseWhen(spec.when)
+
   // Validated before anything is written. A job that cannot fire is worse than
   // a rejected one: it looks scheduled.
-  const check = Bun.spawnSync(["systemd-analyze", "calendar", spec.when])
+  const check = Bun.spawnSync(["systemd-analyze", "calendar", when])
   if (check.exitCode !== 0) {
     const msg = new TextDecoder().decode(check.stderr).trim().split("\n")[0]
-    return { ok: false, error: `"${spec.when}" is not a time systemd understands (${msg || "unparseable"})` }
+    return { ok: false, error: `"${spec.when}" is not a time systemd understands (${msg || "unparseable"}). Try "2026-09-06 09:00", "Mon..Fri 08:30" or "*-*-* 07:00:00".` }
   }
 
   const days = spec.recurrent ? (spec.expiryDays ?? 90) : 0
@@ -122,7 +162,7 @@ export function createJob(
     id: jobId,
     kind: spec.kind,
     text: spec.text,
-    when: spec.when,
+    when,
     recurrent: spec.recurrent,
     createdAt: Date.now(),
     expiresAt: days > 0 ? Date.now() + days * 86400_000 : 0,
@@ -143,7 +183,7 @@ export function createJob(
   const args = [
     "systemd-run", "--user",
     `--unit=${unit}`,
-    `--on-calendar=${spec.when}`,
+    `--on-calendar=${when}`,
     "--timer-property=Persistent=true",
     `--description=Desktop Agent: ${spec.text.slice(0, 60)}`,
   ]

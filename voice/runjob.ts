@@ -13,6 +13,7 @@
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { handOff } from "./agent.ts"
 import { remember } from "./history.ts"
+import { cancelJob } from "./schedule.ts"
 import type { Job } from "./schedule.ts"
 
 const HOME = process.env.HOME!
@@ -37,7 +38,12 @@ try {
 }
 
 if (job.expiresAt > 0 && Date.now() > job.expiresAt) {
-  notify("Reminder expired", `"${job.text}" was scheduled to repeat but its 90 days are up. Recreate it if you still want it.`)
+  // Stopped, not just skipped. Announcing the expiry and exiting left the
+  // timer running, so it fired again the next morning and every morning after,
+  // telling you it had expired -- a job that does nothing except nag about
+  // being finished, until somebody happens to run `desktop-agent jobs`.
+  cancelJob(jobId)
+  notify("Schedule expired", `"${job.text}" reached its 90 days and has been removed. Ask for it again if you still want it.`)
   process.exit(0)
 }
 

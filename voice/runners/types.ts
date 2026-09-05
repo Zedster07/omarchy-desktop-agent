@@ -19,6 +19,24 @@ export interface PrepareOptions {
   mcp: { command: string; args: string[] }
 
   /**
+   * Environment the desktop MCP server must be started with.
+   *
+   * Built once by the caller and spread verbatim into whatever config shape a
+   * runner uses. It carries identity, workspace, role and -- for a scheduled
+   * run -- the capability ceiling.
+   *
+   * A parameter rather than something each runner assembles, because the
+   * alternative was tried and failed: DESKTOP_AGENT_JOB_CAPS was added to the
+   * Claude runner alone, and the other three kept launching servers with no
+   * ceiling at all. A scheduled task on those runners was silently treated as
+   * an interactive session. Nothing failed; it just quietly had no limits.
+   *
+   * Spreading one object means a new runner that forgets it is visibly wrong
+   * rather than invisibly unbounded.
+   */
+  mcpEnv: Record<string, string>
+
+  /**
    * Is this launch already inside a sandbox with no compositor sockets?
    *
    * It changes what the safest flags ARE. Codex's bypass says of itself
