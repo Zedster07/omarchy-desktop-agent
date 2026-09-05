@@ -390,6 +390,61 @@ def main(argv):
         print(want)
         return 0
 
+    if cmd in ("policy-caps", "policy-set-cap"):
+        # The capability table, the last big block of the policy that could
+        # only be changed by editing the file. Fourteen allow/ask/deny rows is
+        # exactly the kind of thing a panel is better at than a text editor,
+        # and leaving it file-only was most of what "all configs in the panel"
+        # was still missing.
+        import json as _json, re
+        path = os.path.expanduser("~/.config/desktop-agent/policy.jsonc")
+        try:
+            lines = open(path).read().split("\n")
+        except OSError as e:
+            print("{}" if cmd == "policy-caps" else f"could not read the policy: {e}")
+            return 0 if cmd == "policy-caps" else 1
+
+        # Bounded by the block's own braces rather than by a line count: the
+        # comments inside this block are long and get longer, and a fixed
+        # window would quietly stop finding the last few capabilities.
+        start = next((i for i, l in enumerate(lines)
+                      if _is_code(l) and re.match(r'\s*"capabilities"\s*:', l)), None)
+        if start is None:
+            print("{}" if cmd == "policy-caps" else "no capabilities block")
+            return 0 if cmd == "policy-caps" else 1
+        end = next((i for i in range(start + 1, len(lines))
+                    if _is_code(lines[i]) and re.match(r'\s*\}', lines[i])), len(lines))
+
+        rows = {}
+        for i in range(start, end):
+            if not _is_code(lines[i]):
+                continue
+            m = re.search(r'"([a-zA-Z]+)"\s*:\s*"(allow|ask|deny)"', lines[i])
+            if m:
+                rows[m.group(1)] = (m.group(2), i)
+
+        if cmd == "policy-caps":
+            print(_json.dumps({k: v[0] for k, v in rows.items()}))
+            return 0
+
+        name = argv[2] if len(argv) > 2 else ""
+        want = (argv[3] if len(argv) > 3 else "").lower()
+        if want not in ("allow", "ask", "deny"):
+            print("usage: desktop-agent-config policy-set-cap <name> allow|ask|deny")
+            return 1
+        if name not in rows:
+            print(f"no such capability: {name}")
+            return 1
+        i = rows[name][1]
+        lines[i] = re.sub(r'("' + re.escape(name) + r'"\s*:\s*")(allow|ask|deny)(")',
+                          r'\g<1>' + want + r'\g<3>', lines[i])
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines))
+        os.replace(tmp, path)
+        print(want)
+        return 0
+
     if cmd == "policy-yolo":
         # Does the POLICY permit a lease at all?
         #

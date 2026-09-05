@@ -74,16 +74,23 @@
     "screenshot": "allow", // capture the screen (denied apps are blacked out)
     "workspace": "allow", // switch/rename workspaces
     "focus": "allow", // move focus to a window
-    // RELAXED 2026-08-27 for the Daltech demo recordings. A demo is hundreds of
-    // moves, clicks and keystrokes; at "ask" each one raises an overlay, which
-    // both makes it unusable and trains you to approve without reading.
-    // Put these back to "ask" when the recordings are done — this file is read
-    // fresh on every call, so the change takes effect immediately either way.
-    "manage": "allow", // move, resize, float, fullscreen, close, kill
-    "launch": "allow", // start a new application
-    "type": "allow", // enter text
-    "key": "allow", // press keys and shortcuts
-    "mouse": "allow", // move the cursor, click, scroll, drag
+    // Anything that changes your session asks the first time, every time.
+    //
+    // A long session of this is genuinely tedious -- that is what the timed
+    // full-access lease is for: grant it, work, let it expire. The wrong fix
+    // is to leave these on "allow" permanently, which is what an earlier demo
+    // relaxation did: it shipped here for a while, so a fresh install handed
+    // the agent silent mouse, keyboard and window control.
+    //
+    // Change them from the panel's Policy tab, not by hand.
+    "manage": "ask", // move, resize, float, fullscreen, close, kill
+    "launch": "ask", // start a new application
+    "type": "ask", // enter text
+    "key": "ask", // press keys and shortcuts
+    "mouse": "ask", // move the cursor, click, scroll, drag
+    // Both are gated a second time below -- "run" per command, "write" per
+    // path -- and the deny lists there are the real protection, so a prompt on
+    // every one of these would be noise on top of a check that already ran.
     "run": "allow", // run a command -- gated per-command in "run" below
     "write": "allow", // create/edit files -- gated per-path in "paths" below
     // The agent's OWN browser -- a separate empty profile, no extensions, none

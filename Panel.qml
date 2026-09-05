@@ -137,6 +137,29 @@ Panel {
     property bool yoloAllowed: true
     property bool policyMaster: true
 
+    // The capability table. Read as JSON in one go rather than a process per
+    // row: twelve capabilities is twelve subprocesses on every panel open.
+    property var caps: ({})
+    Process {
+        id: capsProc
+        command: ["desktop-agent-config", "policy-caps"]
+        stdout: SplitParser {
+            onRead: function (line) {
+                try {
+                    root.caps = JSON.parse(String(line));
+                } catch (e) {}
+            }
+        }
+    }
+    Process {
+        id: capWriteProc
+        onExited: capsProc.running = true
+    }
+    function setCap(name, value) {
+        capWriteProc.command = ["desktop-agent-config", "policy-set-cap", name, value];
+        capWriteProc.running = true;
+    }
+
     Process {
         id: policyMasterProc
         command: ["desktop-agent-config", "policy-enabled"]
@@ -276,6 +299,7 @@ Panel {
             root.pollState();
         yoloAllowedProc.running = true;
         policyMasterProc.running = true;
+        capsProc.running = true;
         jobsProc.running = true;
         if (!cfgProc.running)
             cfgProc.running = true;
@@ -1208,6 +1232,156 @@ Panel {
                             checked: root.s("policy.recap", true)
                             fontFamily: root.fontFamily
                             onClicked: root.setCfg("policy.recap", !checked)
+                        }
+
+                        HudRail {
+                            width: parent.width
+                            color: Color.foreground
+                        }
+
+                        // ---- capabilities
+                        //
+                        // Twelve allow/ask/deny rules that used to be reachable
+                        // only by editing a commented JSON file. Ordered by what
+                        // the rule lets the agent do, not alphabetically: the four
+                        // that only look at the screen sit above the ones that
+                        // change it, so the consequential half of the list is not
+                        // scattered through the harmless half.
+                        Column {
+                            width: parent.width
+                            spacing: Style.spacing.md
+
+                            HudLabel {
+                                text: "what it may do"
+                                tone: Color.foreground
+                            }
+
+                            Text {
+                                width: parent.width
+                                wrapMode: Text.WordWrap
+                                text: "Checked before anything else, ignoring what the target is. \"Ask\" raises the approval overlay; a full-access lease turns those into silent yes for as long as it runs."
+                                color: Util.alpha(Color.foreground, 0.62)
+                                font.family: root.fontFamily
+                                font.pixelSize: Style.font.caption
+                            }
+
+                            Repeater {
+                                model: [
+                                    {
+                                        k: "observe",
+                                        d: "List windows, workspaces and the cursor"
+                                    },
+                                    {
+                                        k: "screenshot",
+                                        d: "Capture the screen"
+                                    },
+                                    {
+                                        k: "workspace",
+                                        d: "Switch and rename workspaces"
+                                    },
+                                    {
+                                        k: "focus",
+                                        d: "Move focus between windows"
+                                    },
+                                    {
+                                        k: "manage",
+                                        d: "Move, resize, fullscreen, close and kill windows"
+                                    },
+                                    {
+                                        k: "launch",
+                                        d: "Start an application"
+                                    },
+                                    {
+                                        k: "type",
+                                        d: "Enter text"
+                                    },
+                                    {
+                                        k: "key",
+                                        d: "Press keys and shortcuts"
+                                    },
+                                    {
+                                        k: "mouse",
+                                        d: "Move the cursor, click, scroll and drag"
+                                    },
+                                    {
+                                        k: "run",
+                                        d: "Run a command — each one checked again by name"
+                                    },
+                                    {
+                                        k: "write",
+                                        d: "Create and edit files — each path checked again"
+                                    },
+                                    {
+                                        k: "browser",
+                                        d: "Its own browser: empty profile, none of your logins"
+                                    },
+                                ]
+
+                                Item {
+                                    id: capRow
+                                    // Held on the row, because the inner Repeater's
+                                    // own modelData is "allow"/"ask"/"deny" and
+                                    // shadows the capability out here.
+                                    readonly property string capKey: modelData.k
+                                    readonly property string capNow: root.caps[capKey] !== undefined ? String(root.caps[capKey]) : ""
+
+                                    width: parent.width
+                                    // The row is as tall as whichever side is taller.
+                                    // Binding it to the text alone clipped the buttons
+                                    // on the one-line descriptions.
+                                    height: Math.max(capText.implicitHeight, capChoice.height) + Style.spacing.sm
+
+                                    Column {
+                                        id: capText
+                                        anchors.left: parent.left
+                                        anchors.right: capChoice.left
+                                        anchors.rightMargin: Style.spacing.md
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: Style.spacing.xxs
+
+                                        Text {
+                                            text: modelData.k
+                                            color: Color.foreground
+                                            font.family: root.fontFamily
+                                            font.pixelSize: Style.font.body
+                                            font.bold: true
+                                        }
+                                        Text {
+                                            width: parent.width
+                                            text: modelData.d
+                                            wrapMode: Text.WordWrap
+                                            color: Util.alpha(Color.foreground, 0.55)
+                                            font.family: root.fontFamily
+                                            font.pixelSize: Style.font.caption
+                                        }
+                                    }
+
+                                    Row {
+                                        id: capChoice
+                                        anchors.right: parent.right
+                                        anchors.verticalCenter: parent.verticalCenter
+                                        spacing: Style.spacing.xxs
+
+                                        Repeater {
+                                            model: ["allow", "ask", "deny"]
+                                            Button {
+                                                readonly property color hue: modelData === "deny" ? Theme.danger : modelData === "ask" ? Theme.caution : Theme.ok
+                                                text: modelData
+                                                fontSize: Style.font.caption
+                                                bordered: true
+                                                focusable: true
+                                                // Filled when it is the live answer, outlined
+                                                // otherwise: three identical outlined buttons
+                                                // give no clue which one is in effect.
+                                                selected: capRow.capNow === modelData
+                                                foreground: hue
+                                                accent: hue
+                                                onClicked: root.setCap(capRow.capKey, modelData)
+                                            }
+                                        }
+                                    }
+                                }
+                            }
                         }
 
                         HudRail {
