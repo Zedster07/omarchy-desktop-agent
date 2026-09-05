@@ -137,7 +137,25 @@ doctor() {
   fi
 
   echo
-  [[ $missing -eq 0 ]] && bold "All good." || bold "Run: desktop-agent setup"
+  # Name what is actually left, rather than sending someone back to a command
+  # they have just run. After a successful setup the remaining steps are things
+  # setup cannot do for you -- a key you have to fetch, and keybindings you have
+  # to paste -- so saying "run setup" is both wrong and a dead end.
+  echo
+  if [[ $missing -eq 0 ]]; then
+    bold "All good."
+  else
+    bold "What is left"
+    [[ -f "$HOME/.config/desktop-agent/policy.jsonc" ]] || echo "  desktop-agent setup            seed the policy and start the daemon"
+    [[ -L "$HOME/.local/bin/desktop-agent" ]]           || echo "  desktop-agent link             put the commands on PATH"
+    if [[ -f "$HOME/.config/desktop-agent/settings.json" ]] && ! [[ -s "$HOME/.config/desktop-agent/stt.key" ]]; then
+      echo "  a Groq API key                 paste it into the panel's voice tab (console.groq.com)"
+    fi
+    grep -q 'desktop-agent-listen' "$HOME/.config/hypr/bindings.lua" 2>/dev/null \
+      || echo "  desktop-agent keybinds         print the bindings to paste into hypr"
+    have claude && ! grep -q '"desktop"' "$HOME/.claude.json" 2>/dev/null \
+      && echo "  desktop-agent mcp-install      give the agent the desktop tools"
+  fi
   return $missing
 }
 
