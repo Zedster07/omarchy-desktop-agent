@@ -218,6 +218,30 @@ case "${1:-doctor}" in
     keybinds
     doctor
     ;;
+  uninstall)
+    # Everything this plugin leaves outside its own directory.
+    #
+    # Deleting the plugin removes the code and nothing else: the timers, the
+    # daemon unit and the agent's saved state all live elsewhere. Scheduled
+    # jobs clean themselves up on their next firing, but "next firing" for a
+    # yearly job is a year, so this removes them now.
+    bold "Removing scheduled jobs"
+    bun run "$PLUGIN_DIR/voice/jobs-cli.ts" cancel all
+    bold "Stopping services"
+    for u in desktop-agent-voice desktop-agent-stt; do
+      systemctl --user disable --now "$u.service" >/dev/null 2>&1 && ok "$u stopped" || true
+    done
+    bold "State kept, in case this is a reinstall"
+    echo "  policy:   $HOME/.config/desktop-agent/policy.jsonc"
+    echo "  settings: $HOME/.config/desktop-agent/settings.json"
+    echo "  reports:  $HOME/.local/state/desktop-agent/runs/"
+    echo "  audit:    $HOME/.local/share/desktop-agent/desktop.log"
+    echo
+    echo "  Remove those by hand if you want them gone:"
+    echo "    rm -rf ~/.config/desktop-agent ~/.local/state/desktop-agent ~/.local/share/desktop-agent"
+    ok "done — the plugin directory can now be deleted"
+    ;;
+
   remind)
     # A reminder without an agent.
     #
@@ -227,6 +251,10 @@ case "${1:-doctor}" in
     # be for work, not for remembering.
     [[ -n "${3:-}" ]] || { bad 'usage: desktop-agent remind "<when>" "<text>"'; exit 1; }
     bun run "$PLUGIN_DIR/voice/jobs-cli.ts" remind "$2" "$3"
+    ;;
+
+  jobs-json)
+    bun run "$PLUGIN_DIR/voice/jobs-cli.ts" list-json
     ;;
 
   jobs)

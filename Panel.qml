@@ -104,6 +104,23 @@ Panel {
   // checks policy.yolo.enabled before honouring the file the panel writes.
   // Offering a switch that the thing it controls has been told to ignore is
   // worse than not offering it.
+  // ---- scheduled jobs
+  //
+  // Listed here because the CLI cannot be the only way to see them. A schedule
+  // is a thing that acts on your machine while you are not looking, and one
+  // you can only find by remembering a command is one you will not find.
+  property var jobs: []
+  Process {
+    id: jobsProc
+    command: ["desktop-agent", "jobs-json"]
+    stdout: SplitParser {
+      onRead: function(line) {
+        try { root.jobs = JSON.parse(String(line)) } catch (e) {}
+      }
+    }
+  }
+  Process { id: jobCancelProc; onExited: jobsProc.running = true }
+
   property bool yoloAllowed: true
   Process {
     id: yoloAllowedProc
@@ -199,6 +216,7 @@ Panel {
     if (service) { service.probe(); service.readYolo() }
     else root.pollState()
     yoloAllowedProc.running = true
+    jobsProc.running = true
     if (!cfgProc.running) cfgProc.running = true
   }
   function toggleKillswitch() { if (service) service.toggleKillswitch() }
@@ -512,6 +530,90 @@ Panel {
                 bordered: true; focusable: true
                 fontSize: Style.font.bodySmall
                 onClicked: root.service ? root.service.endYolo() : root.ipcCall("yoloOff")
+              }
+            }
+
+            // ---- scheduled jobs
+            Column {
+              width: parent.width
+              spacing: Style.spacing.md
+
+              HudLabel {
+                text: root.jobs.length ? "scheduled · " + root.jobs.length : "scheduled"
+                tone: Color.foreground
+                color: Util.alpha(Color.foreground, 0.45)
+              }
+
+              Text {
+                visible: root.jobs.length === 0
+                width: parent.width
+                wrapMode: Text.WordWrap
+                text: "Nothing scheduled. Ask for a reminder — \"remind me at 6 to take the bins out\" — or a repeating task."
+                color: Util.alpha(Color.foreground, 0.62)
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.caption
+              }
+
+              Repeater {
+                model: root.jobs
+                Column {
+                  width: parent.width
+                  spacing: Style.spacing.xxs
+
+                  // Anchored rather than laid out by arithmetic: the button
+                  // sits on the right edge and the description takes whatever
+                  // is left, so a long reminder elides instead of pushing the
+                  // control off the panel.
+                  Item {
+                    width: parent.width
+                    height: Math.max(jobCancel.implicitHeight, jobKind.implicitHeight)
+
+                    HudLabel {
+                      id: jobKind
+                      anchors.left: parent.left
+                      anchors.verticalCenter: parent.verticalCenter
+                      // A task can act on the machine; a reminder only speaks.
+                      text: modelData.kind === "task" ? "task" : "reminder"
+                      tone: modelData.kind === "task" ? Theme.caution : Color.foreground
+                      color: modelData.kind === "task" ? Theme.caution : Util.alpha(Color.foreground, 0.45)
+                    }
+                    Text {
+                      anchors.left: jobKind.right
+                      anchors.leftMargin: Style.spacing.md
+                      anchors.right: jobCancel.left
+                      anchors.rightMargin: Style.spacing.md
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: modelData.text
+                      elide: Text.ElideRight
+                      color: Util.alpha(Color.foreground, 0.85)
+                      font.family: root.fontFamily
+                      font.pixelSize: Style.font.caption
+                    }
+                    Button {
+                      id: jobCancel
+                      anchors.right: parent.right
+                      anchors.verticalCenter: parent.verticalCenter
+                      text: "cancel"
+                      bordered: true; focusable: true
+                      foreground: Theme.danger; accent: Theme.danger
+                      fontSize: Style.font.caption
+                      onClicked: {
+                        jobCancelProc.command = ["desktop-agent", "job-cancel", modelData.id]
+                        jobCancelProc.running = true
+                      }
+                    }
+                  }
+
+                  Text {
+                    width: parent.width
+                    text: (modelData.recurrent ? "repeats " : "once ") + modelData.when
+                      + (modelData.capabilities && modelData.capabilities.length
+                          ? "  ·  may " + modelData.capabilities.join(", ") : "")
+                    color: Util.alpha(Color.foreground, 0.5)
+                    font.family: root.fontFamily
+                    font.pixelSize: Style.font.caption
+                  }
+                }
               }
             }
           }

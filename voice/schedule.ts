@@ -150,7 +150,20 @@ export function createJob(
   // A one-off removes itself once it has fired. Nothing to forget, nothing to
   // clean up later, and no way for it to run twice.
   if (!spec.recurrent) args.push("--timer-property=RemainAfterElapse=false")
-  args.push(bun, "run", runner, jobId)
+  // The timer outlives the plugin unless it is taught not to.
+  //
+  // Omarchy runs no uninstall hook, so deleting the plugin directory leaves
+  // these units behind: they fire on schedule, fail because the runner is
+  // gone, and keep failing on schedule for as long as the machine exists.
+  // Rather than depend on a hook that does not exist, each job checks that its
+  // runner is still there and removes ITSELF if it is not. The first firing
+  // after an uninstall is the last one.
+  const selfHeal =
+    `test -f ${runner} || { ` +
+    `systemctl --user stop ${unit}.timer >/dev/null 2>&1; ` +
+    `rm -f ${JOBS}/${jobId}.json; exit 0; }; ` +
+    `exec ${bun} run ${runner} ${jobId}`
+  args.push("/bin/sh", "-c", selfHeal)
 
   const made = Bun.spawnSync(args)
   if (made.exitCode !== 0) {

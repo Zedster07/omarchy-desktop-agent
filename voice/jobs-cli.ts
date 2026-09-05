@@ -41,6 +41,19 @@ if (cmd === "cancel") {
   process.exit(0)
 }
 
+if (cmd === "list-json") {
+  // One line of JSON, for the panel. Kept separate from `list` so the human
+  // format can stay readable without something parsing it.
+  pruneJobs()
+  const next = nextRuns()
+  console.log(JSON.stringify(listJobs().map(j => ({
+    id: j.id, kind: j.kind, text: j.text, when: j.when,
+    recurrent: j.recurrent, capabilities: j.capabilities,
+    next: next[j.id] ?? "", expiresAt: j.expiresAt,
+  }))))
+  process.exit(0)
+}
+
 if (cmd === "remind") {
   const when = process.argv[3]
   const text = process.argv.slice(4).join(" ")
