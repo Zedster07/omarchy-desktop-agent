@@ -256,7 +256,7 @@ Panel {
     // this panel's kill-switch flag -- and showing only the flag meant a fresh
     // install read "policy active" while every gated action refused.
     readonly property string statusLine: !policyReadable ? "policy unreadable — everything refuses"
-      : !policyMaster ? "desktop control off in your policy — everything gated refuses"
+      : !policyMaster ? "desktop control off — everything refuses"
       : !policyEnabled ? "kill switch on — every gated action refuses"
       : yoloActive ? (yoloAllowed ? "full access · " + yoloClock + " left" : "full access granted but ignored by policy")
       : listening ? "listening" : "policy active"
