@@ -300,6 +300,47 @@ def main(argv):
     def _is_code(line):
         return not line.lstrip().startswith("//")
 
+    # Read-modify-write the policy under a lock, into a private temp file.
+    #
+    # Every setter used to write to a fixed "<path>.tmp". Two writers at once
+    # -- the panel and a terminal, or a burst of clicks -- raced on that one
+    # name: each rename pulled the file out from under the others, which died
+    # with a traceback, and the surviving writer had read the file BEFORE the
+    # others wrote, so their changes were gone. Six concurrent writes landed
+    # two. The lock closes the lost update; the private temp name closes the
+    # crash; both are needed.
+    def _edit_policy(path, mutate):
+        import fcntl, tempfile
+        try:
+            lock = open(path + ".lock", "a+")
+        except OSError as e:
+            return f"could not lock the policy: {e}"
+        try:
+            fcntl.flock(lock, fcntl.LOCK_EX)
+            try:
+                lines = open(path).read().split("\n")
+            except OSError as e:
+                return f"could not read the policy: {e}"
+            err = mutate(lines)
+            if err:
+                return err
+            d = os.path.dirname(path) or "."
+            fd, tmp = tempfile.mkstemp(dir=d, prefix=".policy-", suffix=".tmp")
+            try:
+                with os.fdopen(fd, "w") as f:
+                    f.write("\n".join(lines))
+                os.replace(tmp, path)
+            except BaseException:
+                try:
+                    os.unlink(tmp)
+                except OSError:
+                    pass
+                raise
+            return None
+        finally:
+            fcntl.flock(lock, fcntl.LOCK_UN)
+            lock.close()
+
     if cmd in ("policy-enabled", "policy-set-enabled"):
         # The MASTER switch, the one at the top of the policy.
         #
@@ -335,11 +376,22 @@ def main(argv):
         if want not in ("true", "false"):
             print("usage: desktop-agent-config policy-set-enabled true|false")
             return 1
-        lines[target] = re.sub(r'("enabled"\s*:\s*)(true|false)', r'\g<1>' + want, lines[target])
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            f.write("\n".join(lines))
-        os.replace(tmp, path)
+
+        def _mutate(lines):
+            yolo = next((i for i, l in enumerate(lines)
+                         if _is_code(l) and re.match(r'\s*"yolo"\s*:', l)), len(lines))
+            i = next((i for i in range(len(lines))
+                      if i < yolo and _is_code(lines[i])
+                      and re.search(r'"enabled"\s*:\s*(true|false)', lines[i])), None)
+            if i is None:
+                return "no enabled key"
+            lines[i] = re.sub(r'("enabled"\s*:\s*)(true|false)', r'\g<1>' + want, lines[i])
+            return None
+
+        err = _edit_policy(path, _mutate)
+        if err:
+            print(err)
+            return 1
         print(want)
         return 0
 
@@ -382,11 +434,23 @@ def main(argv):
             print("no enabled key inside the yolo block")
             return 1
 
-        lines[target] = re.sub(r'("enabled"\s*:\s*)(true|false)', r'\g<1>' + want, lines[target])
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            f.write("\n".join(lines))
-        os.replace(tmp, path)
+        def _mutate(lines):
+            start = next((i for i, l in enumerate(lines)
+                          if _is_code(l) and re.match(r'\s*"yolo"\s*:', l)), None)
+            if start is None:
+                return "no yolo block in the policy"
+            i = next((i for i in range(start, min(start + 12, len(lines)))
+                      if _is_code(lines[i])
+                      and re.search(r'"enabled"\s*:\s*(true|false)', lines[i])), None)
+            if i is None:
+                return "no enabled key inside the yolo block"
+            lines[i] = re.sub(r'("enabled"\s*:\s*)(true|false)', r'\g<1>' + want, lines[i])
+            return None
+
+        err = _edit_policy(path, _mutate)
+        if err:
+            print(err)
+            return 1
         print(want)
         return 0
 
@@ -435,13 +499,28 @@ def main(argv):
         if name not in rows:
             print(f"no such capability: {name}")
             return 1
-        i = rows[name][1]
-        lines[i] = re.sub(r'("' + re.escape(name) + r'"\s*:\s*")(allow|ask|deny)(")',
-                          r'\g<1>' + want + r'\g<3>', lines[i])
-        tmp = path + ".tmp"
-        with open(tmp, "w") as f:
-            f.write("\n".join(lines))
-        os.replace(tmp, path)
+
+        # Located again inside the lock. The scan above ran before it, so by
+        # now another writer may have moved every line -- acting on those
+        # numbers is what the lock exists to prevent.
+        def _mutate(lines):
+            start = next((i for i, l in enumerate(lines)
+                          if _is_code(l) and re.match(r'\s*"capabilities"\s*:', l)), None)
+            if start is None:
+                return "no capabilities block"
+            end = next((i for i in range(start + 1, len(lines))
+                        if _is_code(lines[i]) and re.match(r'\s*\}', lines[i])), len(lines))
+            pat = r'("' + re.escape(name) + r'"\s*:\s*")(allow|ask|deny)(")'
+            for i in range(start, end):
+                if _is_code(lines[i]) and re.search(pat, lines[i]):
+                    lines[i] = re.sub(pat, r'\g<1>' + want + r'\g<3>', lines[i])
+                    return None
+            return f"no such capability: {name}"
+
+        err = _edit_policy(path, _mutate)
+        if err:
+            print(err)
+            return 1
         print(want)
         return 0
 
