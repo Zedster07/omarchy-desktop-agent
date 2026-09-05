@@ -86,6 +86,9 @@ doctor() {
   else
     bad "commands not on PATH — F9 and the panel will silently do nothing  (run: desktop-agent link)"
   fi
+  if [[ -n "$(find "$PLUGIN_DIR" -type l -not -path '*/.git/*' 2>/dev/null | head -1)" ]]; then
+    bad "symlinks inside the plugin folder — 'omarchy plugin update' will fail validation and roll back  (run: desktop-agent mcp-install)"
+  fi
   if [[ -d "$HOME/.config/omarchy/plugins/io.github.zedster07.desktop-agent" ]]; then
     ok "registered with the Omarchy shell"
   else
@@ -413,6 +416,16 @@ case "${1:-doctor}" in
     if [[ ! -d "$PLUGIN_DIR/server/node_modules" ]]; then
       bold "Installing server dependencies"
       (cd "$PLUGIN_DIR/server" && bun install) || { bad "bun install failed"; exit 1; }
+      # Omarchy's plugin validator rejects symlinks anywhere inside a plugin
+      # folder, and `bun install` leaves one: node_modules/.bin/node-which.
+      # With it there, `omarchy plugin update` fails validation and rolls back
+      # -- so installing the agent half quietly broke every future update, and
+      # the only symptom was an update that said it had been undone.
+      #
+      # Nothing here runs a dependency's CLI; .bin exists for a convenience we
+      # do not use.
+      find "$PLUGIN_DIR/server/node_modules" -type l -delete 2>/dev/null || true
+      rmdir "$PLUGIN_DIR/server/node_modules/.bin" 2>/dev/null || true
     fi
     target="${2:-all}"
     bold "Registering Desktop MCP server (target: $target)"
