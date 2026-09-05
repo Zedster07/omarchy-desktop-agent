@@ -2,61 +2,77 @@ import QtQuick
 import qs.Commons
 import "."
 
-// The panel's section switcher.
+// Which section you are looking at, and how to get to another one.
 //
-// Underline rather than a filled pill: a filled tab competes with the state
-// colour the rest of the panel uses to mean something, and this bar should
-// never look like a status.
+// The first version was four words in caption-sized uppercase at 38% opacity,
+// separated by an underline a pixel and a half tall, with a hit area exactly
+// as wide as the text. It read as a subtitle rather than a control: you could
+// not tell it was clickable, could not tell which one was active without
+// looking closely, and had to aim.
+//
+// A tab is a button. It gets a button's size, a button's target, and a state
+// you can see from across the room.
 Item {
   id: root
+
   property var tabs: []
   property int current: 0
   signal picked(int index)
 
-  implicitHeight: row.implicitHeight + Style.spacing.md
+  implicitHeight: row.implicitHeight
 
   Row {
     id: row
     anchors.left: parent.left
-    spacing: Style.spacing.xxl
+    anchors.right: parent.right
+    spacing: Style.spacing.xs
 
     Repeater {
       model: root.tabs
-      Item {
-        width: label.implicitWidth
-        height: label.implicitHeight + Style.spacing.md
 
-        HudLabel {
-          id: label
-          text: modelData
-          tone: Color.foreground
-          color: index === root.current ? Color.accent : Util.alpha(Color.foreground, 0.38)
+      Item {
+        // Equal shares of the width, so the targets are large and the row
+        // cannot reflow as labels change length.
+        width: (root.width - Style.spacing.xs * (root.tabs.length - 1)) / root.tabs.length
+        height: label.implicitHeight + Style.spacing.lg * 2
+
+        readonly property bool active: index === root.current
+
+        Rectangle {
+          anchors.fill: parent
+          radius: Style.cornerRadius
+          // Filled when active, faintly lit on hover, invisible otherwise --
+          // three states you can distinguish without reading anything.
+          color: parent.active ? Util.alpha(Color.accent, 0.16)
+            : hover.hovered ? Util.alpha(Color.foreground, 0.07)
+            : "transparent"
+          border.width: parent.active ? Style.spacing.hairline : 0
+          border.color: Util.alpha(Color.accent, 0.45)
           Behavior on color { ColorAnimation { duration: 120 } }
         }
 
-        Rectangle {
-          anchors.bottom: parent.bottom
-          anchors.left: parent.left
-          width: index === root.current ? parent.width : 0
-          height: Math.max(1, Style.space(1.5))
-          color: Color.accent
-          Behavior on width { NumberAnimation { duration: 160; easing.type: Easing.OutCubic } }
+        Text {
+          id: label
+          anchors.centerIn: parent
+          text: modelData
+          // Body size, not caption. This is navigation, and it was competing
+          // with the section headings underneath it.
+          font.family: Style.font.family
+          font.pixelSize: Style.font.body
+          font.bold: parent.active
+          color: parent.active ? Color.accent
+            : hover.hovered ? Color.foreground
+            : Util.alpha(Color.foreground, 0.62)
+          Behavior on color { ColorAnimation { duration: 120 } }
         }
+
+        HoverHandler { id: hover; cursorShape: Qt.PointingHandCursor }
 
         MouseArea {
           anchors.fill: parent
-          hoverEnabled: true
-          cursorShape: Qt.PointingHandCursor
           onClicked: root.picked(index)
         }
       }
     }
-  }
-
-  Rectangle {
-    anchors.bottom: parent.bottom
-    width: parent.width
-    height: 1
-    color: Util.alpha(Color.foreground, 0.10)
   }
 }

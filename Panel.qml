@@ -335,6 +335,32 @@ Panel {
     contentWidth: panel.fittedContentWidth(Style.space(460))
     contentHeight: panel.fittedContentHeight(main.implicitHeight)
 
+      // A backdrop of our own.
+      //
+      // Omarchy's flyout surface is translucent because it is normally blurred,
+      // and this plugin used to blur it -- by adding a layer rule for the
+      // shared bar-flyout namespace, which blurred every OTHER panel too. That
+      // was a system-wide change made for one plugin's benefit, so it went.
+      //
+      // What was left was translucency with nothing behind it: whatever was on
+      // screen read straight through the settings and competed with them.
+      // Painting our own ground fixes the contrast here without deciding
+      // anything for the rest of the desktop.
+      Rectangle {
+        anchors.fill: parent
+        radius: Style.cornerRadius
+        // The theme's own surface, so a light theme gets a light panel.
+        color: Theme.cardBackground
+        opacity: 0.97
+      }
+      Rectangle {
+        anchors.fill: parent
+        radius: Style.cornerRadius
+        color: "transparent"
+        border.width: Style.spacing.hairline
+        border.color: Util.alpha(root.tone, 0.25)
+      }
+
     PanelKeyCatcher {
       id: keyCatcher
       anchors.fill: parent
