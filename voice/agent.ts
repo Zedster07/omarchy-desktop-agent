@@ -15,6 +15,7 @@
 import { settingStr } from "./settings.ts"
 import { resetBeat, sinceBeat } from "./heartbeat.ts"
 import { killTree } from "./killtree.ts"
+import { sandboxAvailable, startBridge, sandboxArgv, bridgeCommand } from "./sandbox.ts"
 import { appendFileSync } from "node:fs"
 import { getRunner, listAvailableRunners, unconfinedRunners, taskPrompt } from "./runners/index.ts"
 
@@ -132,7 +133,16 @@ export async function handOff(
   // premise of running an agent unattended is that the policy engine sees
   // every action, and it does not see anything an agent does through its own
   // shell.
-  if (!runner.confined) {
+  // A runner that keeps its own shell can still be made harmless: take away
+  // the compositor sockets and the shell has nothing to drive. Confinement
+  // stops being a property of the RUNNER and becomes a property of how it is
+  // launched -- which is why this is checked before the refusal below rather
+  // than as a softener for it.
+  const sb = sandboxAvailable()
+  const sandboxWanted = (await settingStr("agent.sandbox", "true")) !== "false"
+  const sandboxed = !runner.confined && sandboxWanted && sb.ok
+
+  if (!runner.confined && !sandboxed) {
     const allow = (await settingStr("agent.allowUnconfined", "false")) === "true"
     if (allow) {
       // Say so, in the audit log, at the time.
@@ -156,7 +166,12 @@ export async function handOff(
     if (!allow) {
       return {
         ok: false,
-        summary: `${runner.name} cannot be confined to the desktop tools — ${runner.unconfinedReason ?? "it keeps its own shell"}. Set agent.allowUnconfined to run it anyway.`,
+        summary: sb.ok
+          ? `${runner.name} cannot be confined to the desktop tools — ${runner.unconfinedReason ?? "it keeps its own shell"}. Set agent.allowUnconfined to run it anyway.`
+          // Naming what is missing, because the sandbox is the answer here and
+          // "install bwrap" is a far better instruction than "turn off a
+          // safety setting".
+          : `${runner.name} keeps its own shell and cannot be sandboxed: ${sb.missing.join(" and ")} not installed. Install ${sb.missing.join(" and ")}, or set agent.allowUnconfined to run it unprotected.`,
         report: "",
       }
     }
@@ -169,12 +184,27 @@ export async function handOff(
 
   const serverScript = new URL("../server/server.ts", import.meta.url).pathname
 
+  // The bridge has to exist before prepare(), because the config prepare()
+  // writes has to name it.
+  const bridge = sandboxed
+    ? await startBridge("master", {
+        DESKTOP_AGENT_IDENTITY: runner.id,
+        DESKTOP_AGENT_ROLE: "master",
+        DESKTOP_AGENT_WORKSPACE: String(workspace),
+      })
+    : null
+  if (sandboxed && !bridge) {
+    return { ok: false, summary: "could not start the sandbox bridge — refusing to run unprotected", report: "" }
+  }
+
   const prepared = await runner.prepare({
     phrase,
     workspace,
     serverScript,
     bunPath: bun,
     stateDir: STATE,
+    mcp: bridge ? bridgeCommand() : { command: bun, args: ["run", serverScript] },
+    externallySandboxed: sandboxed,
   })
 
   if (!prepared) {
@@ -198,7 +228,17 @@ export async function handOff(
   const runDir = `${STATE}/run`
   try { require("node:fs").mkdirSync(runDir, { recursive: true }) } catch {}
 
-  const proc = Bun.spawn(prepared.argv, {
+  // Writable: its own state, and the runner's own config directory so a token
+  // refresh does not fail on a read-only mount. Everything else is read-only,
+  // and the compositor sockets are not there at all.
+  const argv = bridge
+    ? sandboxArgv(prepared.argv, {
+        socket: bridge.socket,
+        writable: [STATE, runDir, `${HOME}/.${runner.id}`, `${HOME}/.config/${runner.id}`],
+      })
+    : prepared.argv
+
+  const proc = Bun.spawn(argv, {
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
@@ -261,6 +301,7 @@ export async function handOff(
     const summary = (heading ? heading.slice(2) : lines.find(Boolean) ?? "").trim()
     return { ok: true, summary: summary.slice(0, 200) || "Done", report: out }
   } finally {
+    bridge?.stop()
     running = null
     runningPid = 0
     clearInterval(killer)

@@ -84,6 +84,11 @@ export async function runSubagent(
   const beatFile = `${dir}/activity`
   const bun = Bun.which("bun")
   const claude = Bun.which("claude")
+  // Kept Claude-only for now. The sandbox makes other runners viable in
+  // principle -- a shell without the compositor sockets cannot drive anything
+  // whoever it belongs to -- but "viable in principle" is the phrase that
+  // preceded every hole in this project. It opens up when a sandboxed Gemini
+  // has been probed the way the master path just was, not before.
   if (!bun || !claude) {
     // Deliberately Claude-only, and deliberately a refusal rather than a
     // fallback to whichever runner is configured.

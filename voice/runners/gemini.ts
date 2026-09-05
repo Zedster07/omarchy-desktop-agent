@@ -29,8 +29,8 @@ export class GeminiRunner implements AgentRunner {
           {
             mcpServers: {
               desktop: {
-                command: opts.bunPath,
-                args: ["run", opts.serverScript],
+                command: opts.mcp.command,
+                args: opts.mcp.args,
                 env: { DESKTOP_AGENT_IDENTITY: "gemini", DESKTOP_AGENT_WORKSPACE: String(opts.workspace) },
               },
             },

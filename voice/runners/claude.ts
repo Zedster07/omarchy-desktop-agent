@@ -43,8 +43,8 @@ export class ClaudeRunner implements AgentRunner {
             mcpServers: {
               desktop: {
                 type: "stdio",
-                command: opts.bunPath,
-                args: ["run", opts.serverScript],
+                command: opts.mcp.command,
+                args: opts.mcp.args,
                 env: { DESKTOP_AGENT_IDENTITY: "claude", DESKTOP_AGENT_WORKSPACE: String(opts.workspace) },
               },
             },

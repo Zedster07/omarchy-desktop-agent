@@ -27,19 +27,27 @@ export class CodexRunner implements AgentRunner {
         "codex",
         "exec",
         "-c",
-        `mcp_servers.desktop.command="${opts.bunPath}"`,
+        `mcp_servers.desktop.command="${opts.mcp.command}"`,
         "-c",
-        `mcp_servers.desktop.args=["run", "${opts.serverScript}"]`,
+        `mcp_servers.desktop.args=${JSON.stringify(opts.mcp.args)}`,
         "-c",
         'mcp_servers.desktop.env.DESKTOP_AGENT_IDENTITY="codex"',
         "-c",
         `mcp_servers.desktop.env.DESKTOP_AGENT_WORKSPACE="${opts.workspace}"`,
-        // NOT --dangerously-bypass-approvals-and-sandbox, whose own help says
-        // "EXTREMELY DANGEROUS. Intended solely for running in environments
-        // that are externally sandboxed." This is not such an environment.
-        "--sandbox",
-        "read-only",
-        "--full-auto",
+        // Its own help names the condition exactly: "EXTREMELY DANGEROUS.
+        // Intended solely for running in environments that are externally
+        // sandboxed." Inside bwrap, with no compositor sockets and a read-only
+        // filesystem, that condition is met and this is the correct flag --
+        // Codex's own sandbox on top would only stop it writing its scratch
+        // files. Outside one it is refused before reaching here.
+        //
+        // (--full-auto was here and does not exist on `codex exec`. It was
+        // added when the bypass was removed and never run, because the only
+        // test at the time checked that the gate refused Codex -- so the
+        // command it would have used was never executed once.)
+        ...(opts.externallySandboxed
+          ? ["--dangerously-bypass-approvals-and-sandbox"]
+          : ["--sandbox", "read-only"]),
         prompt,
       ],
       env: {
