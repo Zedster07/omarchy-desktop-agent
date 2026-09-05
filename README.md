@@ -463,12 +463,28 @@ duplicate those settings — one source of truth per setting.
 
 ## Settings
 
-In the widget's settings form: whether spoken commands are on, when a command
-needs confirmation, whether other plugins may register intents, match
-strictness, and the unattended-lease ceiling.
+Everything you need is in the panel. Whether spoken commands are on, when a
+command needs confirmation, whether other plugins may register intents, match
+strictness, the unattended-lease ceiling, and — in the Policy tab — the master
+desktop-control switch, whether full access is permitted at all, and each of
+the twelve capabilities as allow / ask / deny.
 
-`policy.jsonc` stays a hand-edited file on purpose: it is the security
-boundary, it wants comments, and it should be reviewed as text.
+The two switches and the capability table used to be reachable only by editing
+`policy.jsonc`, on the reasoning that a file is somewhere the agent cannot
+get to. That was protection by location, and it only held while the switch
+stayed inconvenient for you too. It is no longer needed: the agent is refused
+clicks onto this plugin's own surfaces by geometry, and refused
+`desktop-agent-config` by name from any spoken request. So the switches live
+where you can find them.
+
+The panel edits `policy.jsonc` line by line and never re-serialises it, so the
+comments explaining every rule survive. It also skips comment lines when
+locating a key — the file's own header contains the text `"enabled": false`,
+and a naive match rewrites that instead of the setting.
+
+`policy.jsonc` is still a text file worth reading, and the pattern lists
+(`workspaces`, `apps`, `paths`, `run.commands`) are still edited there: they
+are rule sets, not switches. "Edit policy" in the Policy tab opens it.
 
 ## The policy
 
