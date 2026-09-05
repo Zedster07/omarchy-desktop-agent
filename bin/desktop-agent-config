@@ -291,6 +291,105 @@ def main(argv):
             print("(empty)")
         return 0
 
+    # A commented file means "looks like the setting" is not the same as "is
+    # the setting". The shipped policy's own header carries the line
+    #   //  Emergency stop:  set "enabled": false
+    # which matches the key regex, sits above the yolo block, and would have
+    # been the line these setters rewrote -- editing a comment while reporting
+    # success, on a fresh install, for the switch that governs everything.
+    def _is_code(line):
+        return not line.lstrip().startswith("//")
+
+    if cmd in ("policy-enabled", "policy-set-enabled"):
+        # The MASTER switch, the one at the top of the policy.
+        #
+        # Separate from the panel's kill switch, which writes a flag file, and
+        # the panel had been reporting the flag while the policy said something
+        # else -- so a fresh install showed "policy active" while every gated
+        # action refused. Two off switches, one of them invisible.
+        import re
+        path = os.path.expanduser("~/.config/desktop-agent/policy.jsonc")
+        try:
+            lines = open(path).read().split("\n")
+        except OSError:
+            print("false" if cmd == "policy-enabled" else "no policy")
+            return 0 if cmd == "policy-enabled" else 1
+
+        # The first "enabled" outside the yolo block. Position matters: the
+        # yolo block has one too, and flipping the wrong one either grants
+        # unattended approvals or switches the whole plugin off.
+        yolo = next((i for i, l in enumerate(lines)
+                     if _is_code(l) and re.match(r'\s*"yolo"\s*:', l)), len(lines))
+        target = next((i for i in range(len(lines))
+                       if i < yolo and _is_code(lines[i])
+                       and re.search(r'"enabled"\s*:\s*(true|false)', lines[i])), None)
+        if target is None:
+            print("false" if cmd == "policy-enabled" else "no enabled key")
+            return 0 if cmd == "policy-enabled" else 1
+
+        if cmd == "policy-enabled":
+            print(re.search(r'"enabled"\s*:\s*(true|false)', lines[target]).group(1))
+            return 0
+
+        want = (argv[2] if len(argv) > 2 else "").lower()
+        if want not in ("true", "false"):
+            print("usage: desktop-agent-config policy-set-enabled true|false")
+            return 1
+        lines[target] = re.sub(r'("enabled"\s*:\s*)(true|false)', r'\g<1>' + want, lines[target])
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines))
+        os.replace(tmp, path)
+        print(want)
+        return 0
+
+    if cmd == "policy-set-yolo":
+        # Flip the policy's full-access switch, from the panel.
+        #
+        # This used to be something people were told to edit by hand, on the
+        # reasoning that a file is somewhere an agent cannot reach. That was
+        # protection by location: it only held while the switch stayed
+        # inconvenient. The agent is now locked out of the UI by geometry and
+        # out of this command by voice/safety.ts, so the switch can live where
+        # someone can find it.
+        #
+        # Edited line by line, not by re-serialising: policy.jsonc is a
+        # commented file whose comments explain what every setting does, and
+        # json.dump would silently delete all of them.
+        import re
+        want = (argv[2] if len(argv) > 2 else "").lower()
+        if want not in ("true", "false"):
+            print("usage: desktop-agent-config policy-set-yolo true|false")
+            return 1
+        path = os.path.expanduser("~/.config/desktop-agent/policy.jsonc")
+        try:
+            lines = open(path).read().split("\n")
+        except OSError as e:
+            print(f"could not read the policy: {e}")
+            return 1
+
+        # Find the "enabled" belonging to the yolo block, not the master switch
+        # that shares its name at the top of the file.
+        start = next((i for i, l in enumerate(lines)
+                      if _is_code(l) and re.match(r'\s*"yolo"\s*:', l)), None)
+        if start is None:
+            print("no yolo block in the policy")
+            return 1
+        target = next((i for i in range(start, min(start + 12, len(lines)))
+                       if _is_code(lines[i])
+                       and re.search(r'"enabled"\s*:\s*(true|false)', lines[i])), None)
+        if target is None:
+            print("no enabled key inside the yolo block")
+            return 1
+
+        lines[target] = re.sub(r'("enabled"\s*:\s*)(true|false)', r'\g<1>' + want, lines[target])
+        tmp = path + ".tmp"
+        with open(tmp, "w") as f:
+            f.write("\n".join(lines))
+        os.replace(tmp, path)
+        print(want)
+        return 0
+
     if cmd == "policy-yolo":
         # Does the POLICY permit a lease at all?
         #

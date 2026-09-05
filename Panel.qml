@@ -128,7 +128,46 @@ Panel {
         onExited: jobsProc.running = true
     }
 
+    // The policy's own two switches, read from the file rather than assumed.
+    //
+    // The panel used to show its kill-switch FLAG and call that "policy
+    // active" while the policy's master setting said otherwise -- so a fresh
+    // install, whose shipped default is off, read "armed" with every gated
+    // action refusing. Two off switches, only one of them visible from here.
     property bool yoloAllowed: true
+    property bool policyMaster: true
+
+    Process {
+        id: policyMasterProc
+        command: ["desktop-agent-config", "policy-enabled"]
+        stdout: SplitParser {
+            onRead: function (line) {
+                root.policyMaster = String(line).trim() === "true";
+            }
+        }
+    }
+
+    // Re-reads after a write rather than assuming it took: the setter can
+    // refuse (unreadable policy, a hand-edit mid-flight), and a switch that
+    // slides over regardless would be lying about the file.
+    Process {
+        id: policyWriteProc
+        onExited: {
+            policyMasterProc.running = true;
+            yoloAllowedProc.running = true;
+        }
+    }
+
+    // Writing the policy from the panel is only safe because the agent cannot
+    // reach the panel: clicks onto our own surfaces are refused by geometry,
+    // and desktop-agent-config is refused by name from a spoken request.
+    // Before both of those, this switch had to live in a file the agent had no
+    // reason to touch -- protection by inconvenience, paid for by every user.
+    function setPolicyFlag(which, on) {
+        policyWriteProc.command = ["desktop-agent-config", which === "yolo" ? "policy-set-yolo" : "policy-set-enabled", on ? "true" : "false"];
+        policyWriteProc.running = true;
+    }
+
     Process {
         id: yoloAllowedProc
         command: ["desktop-agent-config", "policy-yolo"]
@@ -210,9 +249,17 @@ Panel {
 
     readonly property color tone: !policyEnabled || !policyReadable ? Theme.danger : yoloActive ? Theme.caution : Theme.ok
 
-    readonly property string glyph: !policyEnabled ? "󰜺" : listening ? "󰍬" : yoloActive ? "󰸋" : "󰂽"
+    readonly property string glyph: (!policyEnabled || !policyMaster) ? "󰜺" : listening ? "󰍬" : yoloActive ? "󰸋" : "󰂽"
 
-    readonly property string statusLine: !policyReadable ? "policy unreadable — everything refuses" : !policyEnabled ? "kill switch on — every gated action refuses" : yoloActive ? (yoloAllowed ? "full access · " + yoloClock + " left" : "full access granted but ignored by policy") : listening ? "listening" : "policy active"
+    // Reports the state that actually governs, not the one this panel happens
+    // to own. There are two off switches -- the policy's master setting and
+    // this panel's kill-switch flag -- and showing only the flag meant a fresh
+    // install read "policy active" while every gated action refused.
+    readonly property string statusLine: !policyReadable ? "policy unreadable — everything refuses"
+      : !policyMaster ? "desktop control off in your policy — everything gated refuses"
+      : !policyEnabled ? "kill switch on — every gated action refuses"
+      : yoloActive ? (yoloAllowed ? "full access · " + yoloClock + " left" : "full access granted but ignored by policy")
+      : listening ? "listening" : "policy active"
 
     property var settings: ({})
     property int tab: {
@@ -228,6 +275,7 @@ Panel {
         } else
             root.pollState();
         yoloAllowedProc.running = true;
+        policyMasterProc.running = true;
         jobsProc.running = true;
         if (!cfgProc.running)
             cfgProc.running = true;
@@ -556,8 +604,8 @@ Panel {
                                     },
                                     {
                                         k: "policy",
-                                        v: root.policyEnabled ? "armed" : "off",
-                                        ok: root.policyEnabled
+                                        v: (root.policyEnabled && root.policyMaster) ? "armed" : "off",
+                                        ok: root.policyEnabled && root.policyMaster
                                     },
                                 ]
                                 Item {
@@ -616,7 +664,7 @@ Panel {
                                 font.pixelSize: Style.font.caption
                             }
                             Row {
-                                visible: !root.yoloActive && root.policyEnabled && root.yoloAllowed
+                                visible: !root.yoloActive && root.policyEnabled && root.policyMaster && root.yoloAllowed
                                 spacing: Style.spacing.controlGap
                                 Repeater {
                                     model: [15, 30, 60]
@@ -636,10 +684,10 @@ Panel {
                             // 57:02 left" while every action still stops for approval is the
                             // most misleading thing this panel can display.
                             Text {
-                                visible: !root.yoloAllowed && root.policyEnabled
+                                visible: !root.yoloAllowed && root.policyEnabled && root.policyMaster
                                 width: parent.width
                                 wrapMode: Text.WordWrap
-                                text: root.yoloActive ? "This lease is NOT being honoured. Your policy has \"yolo\": { \"enabled\": false }, so the server ignores it and every action still asks. Set that to true in ~/.config/desktop-agent/policy.jsonc." : "Turned off in your policy. Set \"enabled\": true inside the \"yolo\" block of ~/.config/desktop-agent/policy.jsonc to allow it — until then a grant would count down and change nothing."
+                                text: root.yoloActive ? "This lease is NOT being honoured — full access is switched off, so every action still asks. Turn on \"Allow full access\" in the Policy tab." : "Switched off. Turn on \"Allow full access\" in the Policy tab to allow it — until then a grant would count down and change nothing."
                                 color: Util.alpha(Theme.caution, 0.85)
                                 font.family: root.fontFamily
                                 font.pixelSize: Style.font.caption
@@ -1100,6 +1148,41 @@ Panel {
                         width: parent.width
                         spacing: Style.spacing.xxl
                         visible: root.tab === 3
+
+                        // The two switches that used to live only in policy.jsonc.
+                        //
+                        // They are here now because the reason they were not is
+                        // gone: the agent cannot click our own surfaces (refused
+                        // by geometry) and cannot run desktop-agent-config from a
+                        // spoken request (refused by name). A setting that can
+                        // only be changed by hand-editing a commented JSON file
+                        // is not protected, it is just hidden -- and the shipped
+                        // default was off, so a fresh install refused everything
+                        // with no visible way to say yes.
+                        Toggle {
+                            width: parent.width
+                            label: "Desktop control"
+                            description: root.policyMaster ? "Gated actions run, subject to the rules below." : "Off. Every gated action refuses, whatever else is set here."
+                            checked: root.policyMaster
+                            accent: Theme.ok
+                            fontFamily: root.fontFamily
+                            onClicked: root.setPolicyFlag("master", !root.policyMaster)
+                        }
+
+                        Toggle {
+                            width: parent.width
+                            label: "Allow full access"
+                            description: root.yoloAllowed ? "Timed leases from the Status tab are honoured. Denials and destructive commands still stop." : "Off. A lease would count down and change nothing."
+                            checked: root.yoloAllowed
+                            accent: Theme.caution
+                            fontFamily: root.fontFamily
+                            onClicked: root.setPolicyFlag("yolo", !root.yoloAllowed)
+                        }
+
+                        HudRail {
+                            width: parent.width
+                            color: Color.foreground
+                        }
 
                         SettingRow {
                             width: parent.width

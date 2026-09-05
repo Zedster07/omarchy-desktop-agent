@@ -82,6 +82,18 @@ export function checkProposedCommand(argv: string[]): Allowed | Refusal {
   //
   // Named explicitly rather than by prefix. "desktop-agent" is not safe; that
   // one verb is.
+  // This plugin's own settings are not something a sentence should change.
+  //
+  // desktop-agent-config writes the settings file and the policy's full-access
+  // switch. A misheard phrase reaching it could widen what the agent may do --
+  // and once the panel can toggle full access, this is the command that
+  // toggle runs. The UI is unreachable to an agent by geometry; the command
+  // behind it has to be unreachable too, or the boundary just moves.
+  if (prog === "desktop-agent-config") {
+    return { ok: false, token: prog,
+             reason: "desktop-agent-config changes this plugin's own settings and permissions; it is only for you, from the panel or a terminal" }
+  }
+
   if (prog === "desktop-agent") {
     if (argv[1] === "remind") return { ok: true }
     return { ok: false, token: `${prog} ${argv[1] ?? ""}`.trim(),

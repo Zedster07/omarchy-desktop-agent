@@ -26,7 +26,14 @@
 // ============================================================================
 {
   // Master switch. false => every desktop_* tool refuses immediately.
-  "enabled": false,
+  //
+  // On by default, and the safety does not come from this line: every gated
+  // action still stops and asks you, denied commands still refuse, and the
+  // full-access lease below is off. Shipping this false made a fresh install
+  // refuse everything while the panel reported itself as armed -- a default
+  // whose only effect was to make the plugin look broken. Toggle it from the
+  // panel's Policy tab, or from the bar icon in an emergency.
+  "enabled": true,
 
   // --------------------------------------------------------------------------
   //  YOLO -- a time-boxed grant that stops the agent interrupting you.
