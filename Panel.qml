@@ -347,7 +347,14 @@ Panel {
       // Painting our own ground fixes the contrast here without deciding
       // anything for the rest of the desktop.
       Rectangle {
+        // Out to the card's edge, not just the content area.
+        //
+        // Filling the content holder covered the middle and left the card's
+        // padding showing whatever was behind the panel -- a frame of desktop
+        // around solid settings, which looks like a rendering fault rather
+        // than a design.
         anchors.fill: parent
+        anchors.margins: -panel.padding
         radius: Style.cornerRadius
         // The theme's own surface, so a light theme gets a light panel.
         color: Theme.cardBackground
@@ -355,6 +362,7 @@ Panel {
       }
       Rectangle {
         anchors.fill: parent
+        anchors.margins: -panel.padding
         radius: Style.cornerRadius
         color: "transparent"
         border.width: Style.spacing.hairline
