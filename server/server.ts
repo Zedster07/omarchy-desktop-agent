@@ -157,6 +157,19 @@ const JOB_CAPS: Set<string> | null = (() => {
 })()
 const JOB_ID = process.env.DESKTOP_AGENT_JOB?.trim() || ""
 
+/**
+ * How many approval cards are on screen waiting for a person.
+ *
+ * Input tools are refused while this is above zero. Not because clicking is
+ * dangerous in itself, but because the one thing an approval must mean is that
+ * somebody who is not the agent decided -- and an agent with a pointer could
+ * click Allow.
+ */
+let awaitingApproval = 0
+
+/** Tools that could answer an approval card, so they cannot run beside one. */
+const INPUT_TOOLS = new Set(["desktop_mouse", "desktop_key", "desktop_type"])
+
 const ROLE = process.env.DESKTOP_AGENT_ROLE?.trim() || "master"
 const IS_SUBAGENT = ROLE !== "master"
 
@@ -1301,13 +1314,25 @@ async function gate(
     }
   }
 
-  const verdict = await askOverlay({
-    tool: toolName,
-    capability: cap,
-    scope,
-    target: d.subject,
-    reasons: d.reasons,
-  })
+    // The agent must not be able to answer its own question.
+    //
+    // mouse, key and type are "allow" in the default policy, and the approval
+    // card is an ordinary layer surface: nothing stopped an agent moving the
+    // pointer onto "Allow once" and clicking it. Every gate in this project
+    // rests on a person deciding, and that made the deciding optional.
+    awaitingApproval++
+    let verdict: string
+    try {
+      verdict = await askOverlay({
+        tool: toolName,
+        capability: cap,
+        scope,
+        target: d.subject,
+        reasons: d.reasons,
+      })
+    } finally {
+      awaitingApproval--
+    }
 
   if (verdict === "always") {
     sessionAlways.add(key)
@@ -1623,6 +1648,18 @@ function guard(tool: string, fn: (args: any) => Promise<ToolResult>) {
     const seq = ++callSeq
     const store = { tool, seq, approvals: [] as string[] }
     let failed: "refused" | "failed" | null = null
+    if (awaitingApproval > 0 && INPUT_TOOLS.has(tool)) {
+      return {
+        content: [{
+          type: "text",
+          text: `REFUSED: an approval is on screen and "${tool}" could answer it.\n` +
+                `  Wait for the person to decide. Their answer comes back as the result of the\n` +
+                `  call that raised it — you do not need to do anything to receive it.`,
+        }],
+        isError: true,
+      }
+    }
+
     if (IS_SUBAGENT && MASTER_ONLY[tool]) {
       // Told what to do instead, not just refused. A subagent that hits this
       // should hand the need back up rather than look for another way round --
