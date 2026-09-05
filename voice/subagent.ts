@@ -40,9 +40,14 @@ ${task}
 How to work here:
 - Do YOUR piece. You cannot see the others and they cannot see you. Do not
   guess at their work, and do not do anything that was not asked of you here.
-- You have no browser and cannot delegate. Both belong to the master. If your
-  piece turns out to need either, stop and say so in your report -- the master
-  will do it. Do not look for a way around it.
+- You work headlessly: commands, files, text. You have no browser, no mouse, no
+  keyboard, no window or workspace control, and you cannot delegate. All of
+  those belong to the master, because there is only one screen and one keyboard
+  focus and several of you. If your piece needs any of them, stop and say so in
+  your report -- the master will do it. Do not look for a way around it.
+- Keep your report SHORT. Long output is truncated before the master sees it,
+  so put findings in the report and bulk material -- listings, logs, dumps --
+  in a file in your own directory and name the path instead.
 - Write nothing outside ${RUNTIME}/desktop-agent/${name}/ unless the task named
   a path. Your findings go back as TEXT, not as files: the master is joining
   several of these, and a file written by two agents at once is the one failure
@@ -80,7 +85,22 @@ export async function runSubagent(
   const bun = Bun.which("bun")
   const claude = Bun.which("claude")
   if (!bun || !claude) {
-    return { name, ok: false, summary: "bun or claude is not on PATH", report: "" }
+    // Deliberately Claude-only, and deliberately a refusal rather than a
+    // fallback to whichever runner is configured.
+    //
+    // Claude Code is the only runner that can be reduced to the desktop tools
+    // (see runners/*.ts: `confined`). Gemini, Codex and OpenCode keep their own
+    // shells, so delegating to one would spawn FOUR agents that can each step
+    // around the policy engine, in parallel, unattended. Falling back to them
+    // would turn a missing dependency into a silent security downgrade, which
+    // is the worst shape a fallback can take.
+    return {
+      name, ok: false,
+      summary: !bun
+        ? "bun is not on PATH"
+        : "delegation needs Claude Code — the other runners cannot be confined to the desktop tools, so subagents are not offered to them",
+      report: "",
+    }
   }
 
   const settings = `${stateDir}/agent-settings.json`

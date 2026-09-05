@@ -53,6 +53,7 @@ const AUDIT_PATH = path.join(os.homedir(), ".local", "share", "desktop-agent", "
 import { onWorkspace, isLaunch, confinementWorkspace, ensureAgentTerminal, sendToAgentTerminal, abortAgentTerminal } from "../voice/workspace.ts"
 import { beat } from "../voice/heartbeat.ts"
 import { runPool, concurrencyLimit } from "../voice/pool.ts"
+import { closeSubagentWindows } from "../voice/workspace.ts"
 import { runSubagent } from "../voice/subagent.ts"
 import { settingStr } from "../voice/settings.ts"
 
@@ -137,12 +138,39 @@ const ROLE = process.env.DESKTOP_AGENT_ROLE?.trim() || "master"
 const IS_SUBAGENT = ROLE !== "master"
 
 const MASTER_ONLY: Record<string, string> = {
+  // One browser, one debugger connection, one page.
   desktop_browser_open: "the browser belongs to the master",
   desktop_browser_read: "the browser belongs to the master",
   desktop_browser_click: "the browser belongs to the master",
   desktop_browser_type: "the browser belongs to the master",
   desktop_browser_close: "the browser belongs to the master",
+
+  // One delegator. Depth stays at one by construction.
   desktop_delegate: "only the master delegates",
+
+  // One cursor, one keyboard focus, one active workspace.
+  //
+  // This is the same argument as the browser and I failed to follow it
+  // through. A machine has exactly one pointer and one focused window: two
+  // subagents typing at once do not each get a keyboard, they interleave
+  // keystrokes into whichever window happened to be focused when each one
+  // fired. The result is not a conflict anybody notices -- it is text going
+  // into the wrong application, and both agents reporting success.
+  //
+  // Subagents are for headless work: reading files, running commands,
+  // extracting and judging text. Anything that needs the screen itself is the
+  // master's, precisely because there is only one of it.
+  desktop_mouse: "the pointer belongs to the master — there is only one",
+  desktop_type: "typing into windows belongs to the master — there is one keyboard focus",
+  desktop_key: "sending keystrokes belongs to the master — there is one keyboard focus",
+  desktop_workspace: "switching workspaces belongs to the master — it moves the whole screen",
+  desktop_window: "moving and focusing windows belongs to the master",
+
+  // Not flagged by the audit, but it follows from the same rule. A subagent
+  // has no mouse, keyboard or window tools, so an app it launches is one it
+  // cannot use -- all it can do is leave a window lying around for somebody
+  // else to close. Opening things is the master's job because using them is.
+  desktop_launch: "opening applications belongs to the master — you have no way to drive one",
 }
 
 /**
@@ -1547,7 +1575,9 @@ function guard(tool: string, fn: (args: any) => Promise<ToolResult>) {
       }
     }
 
-    pulse(activityLabel(tool, args))
+    // Attributed, because four subagents pulsing into one readout is otherwise
+    // a flicker of disconnected verbs with no way to tell who is doing what.
+    pulse((IS_SUBAGENT ? `[${ROLE}] ` : "") + activityLabel(tool, args))
 
     // Held open for as long as the call takes. A download, a page load or a
     // compile is silent in the audit log and busy on the machine, so beating
@@ -1666,10 +1696,24 @@ server.registerTool(
       const v = r.ok ? r.value : null
       if (!v || !v.ok) failed++
       out.push(`## task ${i + 1}${v ? ` (${v.name})` : ""} — ${v?.ok ? "done" : "FAILED"}`)
-      out.push(v ? (v.ok ? v.report : `${v.summary}\n${v.report}`.trim())
-                 : (r as { ok: false; error: string }).error)
+      const body = v ? (v.ok ? v.report : `${v.summary}\n${v.report}`.trim())
+                     : (r as { ok: false; error: string }).error
+      // Capped per task. Twenty subagents returning directory listings or build
+      // logs would arrive as one enormous string in the master's context, and a
+      // model reasoning across a swamped window joins worse than one reading
+      // four tidy summaries. The subagent prompt asks for brevity; this is what
+      // happens when it does not comply.
+      out.push(body.length > 4000
+        ? `${body.slice(0, 4000)}\n\n… truncated at 4000 characters (the full text stayed in ${v?.name ?? "the subagent"}'s scratch directory)`
+        : body)
       out.push("")
     })
+    // Cleaned here, not in the voice daemon. The daemon only sees hand-offs it
+    // started: a master calling delegate twice in one conversation, or any
+    // plain MCP client using this server, would leave windows and directories
+    // behind. Cleanup belongs where the batch ends.
+    closeSubagentWindows(TMP)
+
     out.unshift(failed
       ? `${results.length - failed} of ${results.length} finished, ${failed} failed. Use what succeeded and say plainly what is missing.`
       : `All ${results.length} finished.`)

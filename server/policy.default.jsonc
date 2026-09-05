@@ -113,6 +113,16 @@
   //
   //      "claude":  { "*": "allow" },
   //      "ci":      { "observe": "allow", "screenshot": "allow", "*": "deny" }
+  //
+  //  IF YOU USE DELEGATION, match the subagents too. They arrive under their
+  //  own identities -- "sub-1", "sub-2" and so on -- so an allowlist naming
+  //  only your master locks every subagent out of everything, and a delegated
+  //  batch fails in a way that looks like the feature is broken:
+  //
+  //      "claude":  { "*": "allow" },
+  //      "sub-*":   { "observe": "allow", "screenshot": "allow", "run": "ask" }
+  //
+  //  Giving them less than the master is the point. They do headless work.
   // --------------------------------------------------------------------------
   "agents": {},
 
